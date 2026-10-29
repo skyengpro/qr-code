@@ -17,7 +17,6 @@ fn main() -> ExitCode {
     match result {
         Ok(Outcome::Success) => ExitCode::SUCCESS,
         Ok(Outcome::RulesFailed) => ExitCode::from(1),
-        Ok(Outcome::DecoderUnavailable) => ExitCode::from(2),
         Err(e) => {
             eprintln!("error: {e:#}");
             ExitCode::from(1)

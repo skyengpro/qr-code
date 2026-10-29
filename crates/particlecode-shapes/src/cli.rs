@@ -17,9 +17,9 @@ use crate::build::{BuildError, add_shape};
 use crate::path::ViewBox;
 use crate::preview::{PreviewOptions, preview_png};
 use crate::raster::ShapeInput;
-use crate::report::{profile_name, to_json, to_text};
+use crate::report::{profile_name, to_json, to_text, validate_json, validate_text};
 use crate::rules::check;
-use crate::validate::{self, SyntheticFrames, ValidateConfig};
+use crate::validate::{self, SyntheticFrames, ValidateConfig, compare_with_disc};
 
 /// Tool for custom Particle Code shapes: SVG path to lattice bitmaps, rule checks, previews.
 #[derive(Debug, Parser)]
@@ -173,6 +173,15 @@ pub struct ValidateArgs {
     /// How many images `--dump` writes.
     #[arg(long, default_value_t = 4)]
     pub dump_count: usize,
+    /// Worker threads (default: one per core).
+    #[arg(long, default_value_t = 0)]
+    pub threads: usize,
+    /// Print the result as JSON.
+    #[arg(long)]
+    pub json: bool,
+    /// No progress lines on stderr.
+    #[arg(long)]
+    pub quiet: bool,
 }
 
 /// How a command ended, mapped to the process exit code by `main`.
@@ -180,10 +189,8 @@ pub struct ValidateArgs {
 pub enum Outcome {
     /// Done; rules (if any) hold. Exit code 0.
     Success,
-    /// The shape fails rules 2-6. Exit code 1.
+    /// The shape fails rules 2-6, or rule 7 for `validate`. Exit code 1.
     RulesFailed,
-    /// The command needs the vision decoder. Exit code 2.
-    DecoderUnavailable,
 }
 
 fn parse_profile(s: &str) -> Result<Profile, String> {
@@ -432,10 +439,12 @@ fn export_cmd(args: &ExportArgs, out: &mut dyn Write) -> Result<Outcome> {
 fn validate_cmd(args: &ValidateArgs, out: &mut dyn Write) -> Result<Outcome> {
     let shape = resolve_shape(&args.shape, args.table.as_deref(), args.stroke)?;
     let order = order_of(&shape, args.profile);
+    let table = load_table(args.table.as_deref())?;
     let cfg = ValidateConfig {
         profile: args.profile,
         frames: args.frames,
         seed: args.seed,
+        threads: args.threads,
         ..ValidateConfig::default()
     };
     if let Some(dir) = &args.dump {
@@ -446,17 +455,35 @@ fn validate_cmd(args: &ValidateArgs, out: &mut dyn Write) -> Result<Outcome> {
             fs::write(&file, frame.image.to_png()?)
                 .with_context(|| format!("writing {}", file.display()))?;
         }
-        writeln!(out, "wrote synthetic camera images to {}", dir.display())?;
+        if !args.json {
+            writeln!(out, "wrote synthetic camera images to {}", dir.display())?;
+        }
     }
-    writeln!(
-        out,
-        "validate ({}, profile {}, {} frames): requires the vision decoder, which is not \
-         linked yet; rule 7 was not evaluated",
-        shape.label,
-        profile_name(args.profile),
-        args.frames
-    )?;
-    Ok(Outcome::DecoderUnavailable)
+    let step = (args.frames / 10).max(1);
+    let progress = |phase: &str, done: usize, total: usize| {
+        if !args.quiet && (done.is_multiple_of(step) || done == total) {
+            let _ = writeln!(std::io::stderr(), "  {phase}: {done}/{total} frames");
+        }
+    };
+    let comparison = compare_with_disc(&order, shape.id, &table, &cfg, &progress)?;
+    if args.json {
+        writeln!(
+            out,
+            "{}",
+            validate_json(&shape.label, args.profile, &cfg, &comparison)
+        )?;
+    } else {
+        write!(
+            out,
+            "{}",
+            validate_text(&shape.label, args.profile, &cfg, &comparison)
+        )?;
+    }
+    Ok(if comparison.verdict.passed {
+        Outcome::Success
+    } else {
+        Outcome::RulesFailed
+    })
 }
 
 #[cfg(test)]
@@ -575,9 +602,25 @@ mod tests {
     }
 
     #[test]
-    fn validate_waits_for_the_decoder() {
-        let (res, text) = run_args(&["validate", "0", "--frames", "2"]);
-        assert_eq!(res.unwrap(), Outcome::DecoderUnavailable);
-        assert!(text.contains("requires the vision decoder"), "{text}");
+    fn validate_runs_and_reports_json() {
+        let (res, text) = run_args(&[
+            "validate",
+            "29",
+            "--profile",
+            "s",
+            "--frames",
+            "2",
+            "--threads",
+            "2",
+            "--quiet",
+            "--json",
+        ]);
+        let outcome = res.unwrap();
+        assert!(text.contains("\"shape_stats\""), "{text}");
+        assert_eq!(
+            text.contains("\"passed\":true"),
+            outcome == Outcome::Success,
+            "{text}"
+        );
     }
 }

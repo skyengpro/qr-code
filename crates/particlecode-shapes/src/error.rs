@@ -13,8 +13,6 @@ pub enum Error {
     BadOption(String),
     /// Stroking the path produced nothing (zero-length path or zero width).
     EmptyOutline,
-    /// Rule 7 needs the vision decoder, which this build does not link yet.
-    DecoderUnavailable,
 }
 
 impl fmt::Display for Error {
@@ -24,7 +22,6 @@ impl fmt::Display for Error {
             Error::BadSvg(why) => write!(f, "bad SVG file: {why}"),
             Error::BadOption(why) => write!(f, "bad option: {why}"),
             Error::EmptyOutline => write!(f, "the path has no area to fill or stroke"),
-            Error::DecoderUnavailable => write!(f, "validate requires the vision decoder"),
         }
     }
 }

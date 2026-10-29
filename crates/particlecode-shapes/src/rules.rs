@@ -12,7 +12,7 @@
 //! * **Rule 6, connectivity:** informational. Connected shapes decode better; the report
 //!   counts the parts (rules 2 to 4 are checked for every part).
 //!
-//! Rule 7 (`validate`) needs the vision decoder and lives in [`crate::validate`].
+//! Rule 7 (`validate`) decodes synthetic camera frames and lives in [`crate::validate`].
 
 use particlecode_core::body::BodyCodec;
 use particlecode_core::layout::{DotOrder, Lattice, LatticePoint, to_design_box};
