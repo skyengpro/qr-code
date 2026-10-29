@@ -54,7 +54,8 @@ const H: &[Prim] = &[
     rect(380.0, 390.0, 620.0, 610.0),
 ];
 
-const I: &[Prim] = &[rect(360.0, 70.0, 640.0, 930.0)];
+// 330 wide: a 280 bar covers only ~24 % of the box, under the 25 % ink rule.
+const I: &[Prim] = &[rect(335.0, 70.0, 665.0, 930.0)];
 
 const J: &[Prim] = &[
     rect(610.0, 70.0, 850.0, 560.0),

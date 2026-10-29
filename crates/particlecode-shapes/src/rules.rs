@@ -331,14 +331,7 @@ mod tests {
         for id in table.ids() {
             let input = from_table(&table, id);
             let failing = failing_rules(&check(&input));
-            // The spec's own table lists the heavy `I` below 1,500 dots at M, which is just
-            // under the 25% ink rule; everything else meets every rule.
-            let expected: &[(Profile, u8)] = if id == 10 {
-                &[(Profile::S, 2), (Profile::M, 2), (Profile::L, 2)]
-            } else {
-                &[]
-            };
-            assert_eq!(failing, expected, "{}", input.label);
+            assert!(failing.is_empty(), "{}: {failing:?}", input.label);
         }
     }
 
