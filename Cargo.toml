@@ -6,7 +6,7 @@ default-members = ["crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 publish = false
 repository = "https://github.com/vaam-apps/qr-code"
 authors = ["Stephane Segning <stephane.segning@ssegning.com>"]
