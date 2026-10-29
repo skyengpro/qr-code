@@ -1,0 +1,25 @@
+[package]
+name = "particlecode-shapes"
+description = "Particle Code shape tool: SVG path to lattice bitmaps, rule checks, synthetic validation, shapes.bin."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "particlecode-shapes"
+path = "src/main.rs"
+
+[dependencies]
+particlecode-core = { workspace = true, features = ["std"] }
+particlecode-render.workspace = true
+particlecode-vision.workspace = true
+tiny-skia.workspace = true
+svgtypes.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+
+[lints]
+workspace = true

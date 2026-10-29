@@ -1,0 +1,21 @@
+[package]
+name = "particlecode-render"
+description = "Particle Code backend renderer (tiny-skia) and packagers: PNG, PNG sequence + manifest, animated GIF, SVG; synthetic camera degradations."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+particlecode-core = { workspace = true, features = ["std", "serde"] }
+tiny-skia.workspace = true
+png.workspace = true
+gif.workspace = true
+serde = { workspace = true, features = ["std"] }
+serde_json.workspace = true
+thiserror = { workspace = true, features = ["std"] }
+
+[lints]
+workspace = true

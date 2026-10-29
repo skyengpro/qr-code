@@ -1,0 +1,9 @@
+[alias]
+# `cargo lint` — the exact clippy invocation CI runs.
+lint = "clippy --workspace --all-targets --all-features -- -D warnings"
+# `cargo t` — run the whole test suite.
+t = "test --workspace --all-features"
+# `cargo docs` — build docs the way CI does.
+docs = "doc --workspace --no-deps --all-features"
+# `cargo pc` — run the particlecode CLI.
+pc = "run -p particlecode-cli --release --"

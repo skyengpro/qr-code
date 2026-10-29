@@ -1,0 +1,26 @@
+[package]
+name = "particlecode-ffi"
+description = "Particle Code FFI surface for the Flutter (flutter_rust_bridge) and Tauri apps, plus a C ABI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[dependencies]
+particlecode-core = { workspace = true, features = ["std", "serde"] }
+# `ParticleDecoder::feed_yuv` / `feed_rgba` call `particlecode_vision::{locate, read}`.
+particlecode-vision.workspace = true
+serde = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+thiserror = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+particlecode-render.workspace = true
+
+[lints]
+workspace = true
