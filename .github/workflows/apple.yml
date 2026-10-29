@@ -45,7 +45,10 @@ jobs:
           for lib in target/apple/ParticleCodeFFI.xcframework/*/libparticlecode_ffi.a; do
             echo "== $lib"
             lipo -info "$lib"
-            syms=$(nm -g "$lib" 2>/dev/null)
+            # Apple nm exits non-zero when some archive members have no external symbols;
+            # that is expected, so judge it by its output instead.
+            syms=$(nm -g "$lib" 2>/dev/null || true)
+            test -n "$syms" || { echo "nm printed nothing for $lib"; exit 1; }
             for fn in $fns; do
               # Here-string, not a pipe: with pipefail, grep -q closing early would fail the pipe.
               grep -qE " T _${fn}\$" <<< "$syms" || { echo "missing $fn in $lib"; exit 1; }
