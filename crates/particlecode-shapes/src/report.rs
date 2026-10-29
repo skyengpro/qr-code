@@ -5,6 +5,7 @@ use std::fmt::Write as _;
 use particlecode_core::profile::Profile;
 
 use crate::rules::{MIN_COVERAGE, MIN_ISLAND_DOTS, MIN_STROKE_PITCHES, Report};
+use crate::validate::{Comparison, PASS_RATIO, RunStats, ValidateConfig};
 
 /// One-letter name of a profile.
 pub fn profile_name(profile: Profile) -> &'static str {
@@ -71,7 +72,7 @@ pub fn to_text(report: &Report) -> String {
     );
     let _ = writeln!(
         out,
-        "rule 7 (synthetic validation against the disc): not run, needs the vision decoder"
+        "rule 7 (synthetic validation against the disc): not run here, use `validate`"
     );
     out
 }
@@ -140,6 +141,105 @@ pub fn to_json(report: &Report) -> String {
     }
     out.push_str("]}");
     out
+}
+
+/// Human-readable rule 7 report: shape and disc side by side, then the verdict.
+pub fn validate_text(
+    label: &str,
+    profile: Profile,
+    cfg: &ValidateConfig,
+    c: &Comparison,
+) -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "rule 7: {label}, profile {}, {} synthetic frames (seed {})",
+        profile_name(profile),
+        cfg.frames,
+        cfg.seed
+    );
+    let pct = |x: f64| format!("{:.2}%", x * 100.0);
+    let row = |out: &mut String, name: &str, f: &dyn Fn(&RunStats) -> String| {
+        let _ = writeln!(out, "  {name:<24}{:>14}{:>14}", f(&c.shape), f(&c.disc));
+    };
+    let _ = writeln!(out, "  {:<24}{:>14}{:>14}", "", "shape", "disc");
+    row(&mut out, "frames locked", &|s| pct(s.lock_rate()));
+    row(&mut out, "frames read", &|s| pct(s.read_rate()));
+    row(&mut out, "symbol errors", &|s| {
+        format!("{}/{}", s.errors, s.symbols)
+    });
+    row(&mut out, "symbol error rate", &|s| {
+        format!("{:.4}%", s.ser() * 100.0)
+    });
+    row(&mut out, "SER, frames read only", &|s| {
+        format!("{:.4}%", s.read_ser() * 100.0)
+    });
+    row(&mut out, "erasure rate (<96)", &|s| pct(s.erasure_rate()));
+    row(&mut out, "header decodes", &|s| {
+        format!("{}/{}", s.header_decoded, s.frames)
+    });
+    row(&mut out, "body RS decodes", &|s| {
+        format!("{}/{}", s.body_decoded, s.frames)
+    });
+    row(&mut out, "frames fully decoded", &|s| {
+        format!("{}/{}", s.fully_decoded, s.frames)
+    });
+    let v = &c.verdict;
+    let _ = writeln!(
+        out,
+        "SER ratio shape/disc: {:.2}x over all symbols, {:.2}x over frames read \
+         (limit {PASS_RATIO}x): {}",
+        v.ratio,
+        v.read_ratio,
+        if v.passed { "PASS" } else { "FAIL" }
+    );
+    out
+}
+
+/// JSON rule 7 report.
+pub fn validate_json(
+    label: &str,
+    profile: Profile,
+    cfg: &ValidateConfig,
+    c: &Comparison,
+) -> String {
+    let stats = |s: &RunStats| {
+        format!(
+            "{{\"frames\":{},\"located\":{},\"read\":{},\"symbols\":{},\"errors\":{},\
+             \"ser\":{:.6},\"read_ser\":{:.6},\"lock_rate\":{:.4},\"read_rate\":{:.4},\"erasure_rate\":{:.4},\
+             \"header_decoded\":{},\"body_decoded\":{},\"fully_decoded\":{}}}",
+            s.frames,
+            s.located,
+            s.read,
+            s.symbols,
+            s.errors,
+            s.ser(),
+            s.read_ser(),
+            s.lock_rate(),
+            s.read_rate(),
+            s.erasure_rate(),
+            s.header_decoded,
+            s.body_decoded,
+            s.fully_decoded
+        )
+    };
+    let ratio = if c.verdict.ratio.is_finite() {
+        format!("{:.4}", c.verdict.ratio)
+    } else {
+        "null".to_string()
+    };
+    format!(
+        "{{\"shape\":{},\"profile\":\"{}\",\"frames\":{},\"seed\":{},\"limit\":{PASS_RATIO},\
+         \"ratio\":{ratio},\"read_ratio\":{:.4},\"passed\":{},\"shape_stats\":{},\"disc_stats\":{}}}",
+        json_str(label),
+        profile_name(profile),
+        cfg.frames,
+        cfg.seed,
+        c.verdict.read_ratio,
+        c.verdict.passed,
+        stats(&c.shape),
+        stats(&c.disc)
+    )
 }
 
 /// A JSON string literal.
