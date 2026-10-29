@@ -32,6 +32,7 @@ pub mod motion;
 pub mod profile;
 pub mod receiver;
 pub mod rs;
+mod segment;
 pub mod session;
 pub mod shapes;
 pub mod symbol;
@@ -39,7 +40,10 @@ pub mod symbol;
 pub use error::{DecodeError, EncodeError};
 pub use frame::FrameSpec;
 pub use header::Header;
+pub use liveness::Liveness;
 pub use profile::{EccLevel, Palette, Profile};
-pub use receiver::{Progress, Receiver};
-pub use session::{DisplayInfo, Session, SessionConfig, ShapeChoice};
+pub use receiver::{PacketReceiver, Progress, Receiver};
+pub use session::{
+    DisplayInfo, PacketSession, Session, SessionConfig, ShapeChoice, choose_profile,
+};
 pub use symbol::Sym3;
