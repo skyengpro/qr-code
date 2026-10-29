@@ -12,6 +12,7 @@ use anyhow::{Result, bail};
 use particlecode_core::{DecodeError, Progress, Receiver, Session, Sym3};
 use particlecode_render::synth::Rng;
 
+use crate::camera::{self, Camera};
 use crate::cli::RoundtripArgs;
 use crate::encode::shape_choice;
 use crate::spec::SessionSpec;
@@ -189,6 +190,9 @@ pub fn command(args: &RoundtripArgs, payload: &[u8], out: &mut impl Write) -> Re
     };
     let session = spec.build(payload)?;
     let per_pass = session.frames_per_pass();
+    if args.camera {
+        return camera_command(args, payload, &session, out);
+    }
     let opts = Options {
         drop_every: args.drop_every,
         error_rate: args.error_rate,
@@ -237,6 +241,83 @@ pub fn command(args: &RoundtripArgs, payload: &[u8], out: &mut impl Write) -> Re
         bail!(
             "payload not recovered within {} frames (minimum {})",
             opts.max_frames,
+            report.frames_minimum
+        )
+    }
+}
+
+/// The `--camera` variant: render, degrade and decode every frame.
+fn camera_command(
+    args: &RoundtripArgs,
+    payload: &[u8],
+    session: &Session,
+    out: &mut impl Write,
+) -> Result<()> {
+    let camera = Camera {
+        blur: args.blur,
+        noise: args.noise,
+        tilt: args.tilt,
+    };
+    let max_frames = args
+        .max_frames
+        .unwrap_or_else(|| session.frames_per_pass().saturating_mul(4).max(12));
+    writeln!(
+        out,
+        "profile {:?}, {} dots, {} bytes/frame, {} segment(s), {} frames/pass",
+        session.profile(),
+        session.dot_order().len(),
+        session.block_size(),
+        session.packets().segment_count(),
+        session.frames_per_pass()
+    )?;
+    writeln!(
+        out,
+        "camera: blur {}, noise {}, tilt {} deg, {} px screen",
+        camera.blur,
+        camera.noise,
+        camera.tilt,
+        camera::screen_px(session.profile())
+    )?;
+    let mut io_error = None;
+    let report = camera::run(
+        session,
+        payload,
+        &camera,
+        args.drop_every,
+        max_frames,
+        |step, decoder| {
+            if args.verbose && io_error.is_none() {
+                io_error = writeln!(out, "{}", camera::describe(step, decoder)).err();
+            }
+        },
+    );
+    if let Some(e) = io_error {
+        return Err(e.into());
+    }
+    writeln!(
+        out,
+        "shown {} frames: {} dropped, {} lock failures, {} unreadable, {} RS rejections, {} accepted; \
+         liveness consistent on {}",
+        report.frames_shown,
+        report.frames_dropped,
+        report.lock_failures,
+        report.read_failures,
+        report.rs_rejections,
+        report.frames_accepted,
+        report.liveness_consistent
+    )?;
+    if report.success {
+        writeln!(
+            out,
+            "OK: {} bytes recovered after {} frames (minimum {})",
+            payload.len(),
+            report.frames_shown,
+            report.frames_minimum
+        )?;
+        Ok(())
+    } else {
+        bail!(
+            "payload not recovered within {max_frames} frames (minimum {})",
             report.frames_minimum
         )
     }

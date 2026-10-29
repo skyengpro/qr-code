@@ -47,6 +47,10 @@ name = "symbol_roundtrip"
 path = "../../examples/symbol_roundtrip.rs"
 
 [[example]]
+name = "camera_roundtrip"
+path = "../../examples/camera_roundtrip.rs"
+
+[[example]]
 name = "print_poster"
 path = "../../examples/print_poster.rs"
 
