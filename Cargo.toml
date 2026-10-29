@@ -17,6 +17,7 @@ particlecode-core = { path = "crates/particlecode-core", default-features = fals
 particlecode-vision = { path = "crates/particlecode-vision" }
 particlecode-render = { path = "crates/particlecode-render" }
 particlecode-shapes = { path = "crates/particlecode-shapes" }
+particlecode-ffi = { path = "crates/particlecode-ffi" }
 
 # Core (no_std + alloc friendly)
 raptorq = { version = "2.0.1", default-features = false }
@@ -35,6 +36,9 @@ svgtypes = "0.16.1"
 serde_json = "1.0.154"
 clap = { version = "4.6.7", features = ["derive"] }
 anyhow = "1.0.104"
+
+# Mobile bindings
+jni = "0.22.4"
 
 # Testing
 proptest = "1.11.0"
