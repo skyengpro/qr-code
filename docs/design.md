@@ -108,6 +108,15 @@ Built-in shapes (ids 0–30) are defined analytically in `core::shapes` and eval
 lattice points, so they are identical in every app without shipping bitmaps. Custom shapes
 (ids 32–255) come from `shapes.bin`, produced by the `particlecode-shapes` tool.
 
+`particlecode-shapes validate` (rule 7) renders real codewords through a deliberately harsh
+synthetic camera (heavy glare, blur and noise make ~11 % of frames fail to lock, for every
+shape alike). It compares the symbol error rate against the disc's under identical camera
+chains. A shape passes only if both ratios are ≤ 1.3×:
+
+* the ratio over all symbols, counting unlocked frames as all wrong (the spec's measure);
+* the ratio over the frames that were read. This is the one that separates shapes, because
+  lock failures are shape-independent and swamp the first ratio.
+
 ## Vision decoder
 
 The spec's pipeline, with these refinements (details in `particlecode-vision`'s crate docs):
