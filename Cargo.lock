@@ -534,6 +534,7 @@ name = "particlecode-ffi"
 version = "0.1.0"
 dependencies = [
  "particlecode-core",
+ "particlecode-render",
  "particlecode-vision",
  "serde",
  "serde_json",

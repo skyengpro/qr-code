@@ -23,7 +23,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
 
 use crate::api::decoder::ParticleDecoder;
-use crate::api::dto::{EncoderConfig, ProgressDto};
+use crate::api::dto::{EncoderConfig, FrameResultDto, LivenessDto, ProgressDto};
 use crate::api::encoder::ParticleEncoder;
 use crate::api::error::FfiError;
 
@@ -54,6 +54,7 @@ pub struct PcDecoder {
     inner: ParticleDecoder,
     progress: PcProgress,
     reject_reason: Option<String>,
+    hint: Option<String>,
 }
 
 /// Transfer progress after the last accepted frame (`pc_decoder_progress`).
@@ -70,6 +71,68 @@ pub struct PcProgress {
     pub segments_done: u32,
     /// Segments in the transfer.
     pub segments_total: u32,
+}
+
+/// What a camera frame showed (`pc_decoder_feed_yuv`, `pc_decoder_feed_rgba`).
+///
+/// Fields that do not apply are -1 (`profile`, `shape_id`) or 0.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct PcFrameResult {
+    /// 1 if the three anchors were found.
+    pub locked: i32,
+    /// Profile of the frame's header: 0 S, 1 M, 2 L, -1 not read.
+    pub profile: i32,
+    /// Shape id of the frame's header, -1 if not read.
+    pub shape_id: i32,
+    /// 1 if the particles were read, else 0.
+    pub liveness_read: i32,
+    /// 1 if the particles' seed byte matches the header (valid when `liveness_read`).
+    pub liveness_consistent: i32,
+    /// Low byte of the packet seed shown by the particles (valid when `liveness_read`).
+    pub liveness_seed_low: u32,
+    /// Rolling HMAC value shown by the particles (valid when `liveness_read`); check it with
+    /// `pc_liveness_verify`.
+    pub liveness_rolling: u32,
+    /// Number of valid anchor points: 0, 3 or 4.
+    pub anchor_count: u32,
+    /// Anchor positions in image pixels, `x, y` pairs: top, lower right, lower left, center.
+    pub anchors: [f64; 8],
+    /// Sharpness score (higher is sharper), 0 if not locked.
+    pub sharpness: f64,
+}
+
+impl From<&FrameResultDto> for PcFrameResult {
+    fn from(r: &FrameResultDto) -> Self {
+        let mut out = PcFrameResult {
+            locked: i32::from(r.locked),
+            profile: r.profile.map_or(-1, |p| match p {
+                crate::api::dto::ProfileDto::S => 0,
+                crate::api::dto::ProfileDto::M => 1,
+                crate::api::dto::ProfileDto::L => 2,
+            }),
+            shape_id: r.shape_id.map_or(-1, i32::from),
+            sharpness: r.sharpness,
+            ..PcFrameResult::default()
+        };
+        if let LivenessDto::Read {
+            seed_low,
+            rolling,
+            consistent,
+        } = r.liveness
+        {
+            out.liveness_read = 1;
+            out.liveness_consistent = i32::from(consistent);
+            out.liveness_seed_low = u32::from(seed_low);
+            out.liveness_rolling = u32::from(rolling);
+        }
+        for (slot, p) in out.anchors.chunks_exact_mut(2).zip(&r.anchors) {
+            slot[0] = p.x;
+            slot[1] = p.y;
+            out.anchor_count += 1;
+        }
+        out
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -146,8 +209,24 @@ fn parse_config(json: &[u8]) -> Result<EncoderConfig, FfiError> {
 
 impl PcDecoder {
     fn feed(&mut self, symbols: Vec<u8>, confidences: Vec<u8>) -> i32 {
-        self.reject_reason = None;
         let progress = self.inner.feed_symbols(symbols, confidences);
+        self.hint = None;
+        self.apply(progress)
+    }
+
+    /// Record the outcome of a camera frame and fill `out` if given.
+    fn apply_frame(&mut self, result: FrameResultDto, out: *mut PcFrameResult) -> i32 {
+        if !out.is_null() {
+            // SAFETY: non-NULL checked; writability is the caller's contract.
+            unsafe { *out = PcFrameResult::from(&result) };
+        }
+        self.hint = result.hint;
+        self.apply(result.progress)
+    }
+
+    /// Update the stored progress and reject reason; returns the status.
+    fn apply(&mut self, progress: ProgressDto) -> i32 {
+        self.reject_reason = None;
         match progress {
             ProgressDto::Rejected { reason } => {
                 self.progress.status = PC_REJECTED;
@@ -421,6 +500,7 @@ pub extern "C" fn pc_decoder_new() -> *mut PcDecoder {
             inner: ParticleDecoder::new(),
             progress: PcProgress::default(),
             reject_reason: None,
+            hint: None,
         })))
     })
 }
@@ -476,6 +556,110 @@ pub unsafe extern "C" fn pc_decoder_feed_symbols(
     })
 }
 
+/// Feed one camera frame in YUV 4:2:0 (Android `YUV_420_888`, iOS NV12/NV21, I420).
+///
+/// `y` is `height` rows of `width` bytes, `y_stride` bytes apart. `u` and `v` are the Cb and
+/// Cr buffers at half resolution (`ceil(width / 2)` x `ceil(height / 2)` samples); sample
+/// `(col, row)` is the byte `row * uv_stride + col * uv_pixel_stride`, so planar I420 has
+/// `uv_pixel_stride = 1` and interleaved chroma `2` (NV21: `v` is the interleaved buffer and
+/// `u` the same buffer from byte 1; NV12 the other way round). Each `*_len` is the size of
+/// its buffer in bytes.
+///
+/// Returns [`PC_REJECTED`] (no code found, unreadable, ...; see [`pc_decoder_reject_reason`]
+/// and [`pc_decoder_hint`]), [`PC_ACCEPTED`], [`PC_DONE`], or a negative error:
+/// [`PC_ERR_NULL`] for a NULL handle or plane, [`PC_ERR_INVALID`] if a size is zero or a
+/// buffer is too short for the stated dimensions and strides. If `out` is non-NULL it is
+/// filled for every non-negative result.
+///
+/// # Safety
+///
+/// `dec` must be NULL or a live decoder handle not used concurrently; `y`, `u`, `v` must be
+/// NULL or point to `y_len`, `u_len`, `v_len` readable bytes; `out` must be NULL or point to
+/// a writable `PcFrameResult`.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)] // a flat C signature, like the camera APIs it serves
+pub unsafe extern "C" fn pc_decoder_feed_yuv(
+    dec: *mut PcDecoder,
+    width: u32,
+    height: u32,
+    y: *const u8,
+    y_len: usize,
+    u: *const u8,
+    u_len: usize,
+    v: *const u8,
+    v_len: usize,
+    y_stride: u32,
+    uv_stride: u32,
+    uv_pixel_stride: u32,
+    out: *mut PcFrameResult,
+) -> i32 {
+    guard(|| {
+        // SAFETY: forwarded from this function's contract.
+        let Some(dec) = (unsafe { dec.as_mut() }) else {
+            return PC_ERR_NULL;
+        };
+        // SAFETY: forwarded from this function's contract.
+        let planes = unsafe { (slice(y, y_len), slice(u, u_len), slice(v, v_len)) };
+        let (Some(y), Some(u), Some(v)) = planes else {
+            return PC_ERR_NULL;
+        };
+        let strides = (y_stride, uv_stride, uv_pixel_stride);
+        match dec.inner.try_feed_yuv(width, height, (y, u, v), strides) {
+            Some(result) => dec.apply_frame(result, out),
+            None => PC_ERR_INVALID,
+        }
+    })
+}
+
+/// Feed one RGBA8 camera frame (`rgba_len >= 4 * width * height`, tightly packed; alpha is
+/// ignored), for desktop and webcam capture. Results as for [`pc_decoder_feed_yuv`];
+/// [`PC_ERR_INVALID`] if a size is zero or `rgba_len` is too small.
+///
+/// # Safety
+///
+/// `dec` must be NULL or a live decoder handle not used concurrently; `rgba` must be NULL or
+/// point to `rgba_len` readable bytes; `out` must be NULL or point to a writable
+/// `PcFrameResult`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pc_decoder_feed_rgba(
+    dec: *mut PcDecoder,
+    width: u32,
+    height: u32,
+    rgba: *const u8,
+    rgba_len: usize,
+    out: *mut PcFrameResult,
+) -> i32 {
+    guard(|| {
+        // SAFETY: forwarded from this function's contract.
+        let Some(dec) = (unsafe { dec.as_mut() }) else {
+            return PC_ERR_NULL;
+        };
+        // SAFETY: forwarded from this function's contract.
+        let Some(rgba) = (unsafe { slice(rgba, rgba_len) }) else {
+            return PC_ERR_NULL;
+        };
+        match dec.inner.try_feed_rgba(width, height, rgba) {
+            Some(result) => dec.apply_frame(result, out),
+            None => PC_ERR_INVALID,
+        }
+    })
+}
+
+/// User-facing advice after the last camera frame ("Too dark or too much glare ..."); NULL
+/// if there is none (or on a NULL handle). Release with [`pc_string_free`].
+///
+/// # Safety
+///
+/// `dec` must be NULL or a live decoder handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pc_decoder_hint(dec: *const PcDecoder) -> *mut c_char {
+    guard_ptr(|| {
+        // SAFETY: forwarded from this function's contract.
+        let dec = unsafe { dec.as_ref() }?;
+        to_c_string(dec.hint.clone()?)
+    })
+}
+
 /// Progress after the last `pc_decoder_feed_symbols` call, written to `*out`. Returns 0 or
 /// [`PC_ERR_NULL`]. After [`PC_DONE`], `have == need` and `segments_done ==
 /// segments_total`; before any accepted frame all counts are 0.
@@ -500,7 +684,7 @@ pub unsafe extern "C" fn pc_decoder_progress(dec: *const PcDecoder, out: *mut Pc
     })
 }
 
-/// Why the last `pc_decoder_feed_symbols` call returned [`PC_REJECTED`]; NULL if it did
+/// Why the last feed (symbols or camera frame) returned [`PC_REJECTED`]; NULL if it did
 /// not (or on a NULL handle). Release with [`pc_string_free`].
 ///
 /// # Safety
@@ -593,6 +777,7 @@ mod tests {
     use std::ffi::CStr;
 
     use particlecode_core::FrameSpec;
+    use particlecode_render::synth::RgbImage;
 
     use super::*;
 
@@ -884,6 +1069,328 @@ mod tests {
             assert!(enc.is_null(), "{config}");
             let message = take_string(err).unwrap();
             assert!(message.contains(needle), "{config}: {message}");
+        }
+    }
+
+    fn feed_planes(dec: *mut PcDecoder, p: &crate::testutil::Planes) -> (i32, PcFrameResult) {
+        let mut out = PcFrameResult::default();
+        // SAFETY: `dec` is live; each pointer/length pair comes from a live Vec; `out` is a
+        // valid local.
+        let status = unsafe {
+            pc_decoder_feed_yuv(
+                dec,
+                p.width,
+                p.height,
+                p.y.as_ptr(),
+                p.y.len(),
+                p.u.as_ptr(),
+                p.u.len(),
+                p.v.as_ptr(),
+                p.v.len(),
+                p.y_stride,
+                p.uv_stride,
+                p.uv_pixel_stride,
+                &raw mut out,
+            )
+        };
+        (status, out)
+    }
+
+    /// Run a transfer through `feed` until `PC_DONE`; returns the payload taken.
+    fn camera_transfer(
+        data: &[u8],
+        mut feed: impl FnMut(*mut PcDecoder, &RgbImage) -> (i32, PcFrameResult),
+    ) {
+        let enc = crate::testutil::encoder(data);
+        let dec = pc_decoder_new();
+        let mut got = Vec::new();
+        let mut done = false;
+        for i in 0..enc.frames_per_pass() * 3 {
+            let (status, r) = feed(dec, &crate::testutil::camera_rgb(&enc, i, 760));
+            assert!(
+                status == PC_ACCEPTED || status == PC_DONE,
+                "frame {i}: {status}"
+            );
+            assert_eq!((r.locked, r.profile, r.shape_id), (1, 1, 0));
+            assert!(r.anchor_count >= 3 && r.sharpness > 0.0);
+            assert_eq!((r.liveness_read, r.liveness_consistent), (1, 1));
+            assert!(r.anchors[..6].iter().all(|v| v.is_finite() && *v > 0.0));
+            if let Some(bytes) = take_ready(dec) {
+                got.extend(bytes);
+            }
+            if status == PC_DONE {
+                done = true;
+                break;
+            }
+        }
+        assert!(done, "transfer did not finish");
+        assert_eq!(got, data);
+        // SAFETY: `dec` is live, freed once.
+        unsafe { pc_decoder_free(dec) };
+    }
+
+    #[test]
+    fn c_abi_nv21_camera_round_trip() {
+        let data = crate::testutil::payload(2600);
+        camera_transfer(&data, |dec, img| {
+            feed_planes(dec, &crate::testutil::nv21(img, 8))
+        });
+    }
+
+    #[test]
+    fn c_abi_i420_camera_round_trip() {
+        let data = crate::testutil::payload(2600);
+        camera_transfer(&data, |dec, img| {
+            feed_planes(dec, &crate::testutil::i420(img, 0))
+        });
+    }
+
+    #[test]
+    fn c_abi_rgba_camera_round_trip() {
+        let data = crate::testutil::payload(1200);
+        camera_transfer(&data, |dec, img| {
+            let rgba = crate::testutil::rgba(img);
+            let mut out = PcFrameResult::default();
+            // SAFETY: `dec` is live; `rgba` is a live Vec of the stated length; `out` is a
+            // valid local.
+            let status = unsafe {
+                pc_decoder_feed_rgba(
+                    dec,
+                    img.width,
+                    img.height,
+                    rgba.as_ptr(),
+                    rgba.len(),
+                    &raw mut out,
+                )
+            };
+            (status, out)
+        });
+    }
+
+    #[test]
+    fn camera_calls_check_pointers_and_sizes() {
+        let dec = pc_decoder_new();
+        let grey = vec![128u8; 64 * 64];
+        let half = vec![128u8; 32 * 32];
+        let g = grey.as_ptr();
+        let h = half.as_ptr();
+        // SAFETY: handles are live, non-NULL pointers cover the stated lengths, and NULL
+        // arguments are checked by contract.
+        unsafe {
+            let yuv = |dec, w, hh, y, yl, u, ul, strides: (u32, u32, u32), out| {
+                pc_decoder_feed_yuv(
+                    dec,
+                    w,
+                    hh,
+                    y,
+                    yl,
+                    u,
+                    ul,
+                    h,
+                    half.len(),
+                    strides.0,
+                    strides.1,
+                    strides.2,
+                    out,
+                )
+            };
+            // Valid but empty picture: rejected, with a hint and a reason.
+            let mut out = PcFrameResult {
+                locked: 9,
+                ..PcFrameResult::default()
+            };
+            assert_eq!(
+                yuv(
+                    dec,
+                    64,
+                    64,
+                    g,
+                    grey.len(),
+                    h,
+                    half.len(),
+                    (64, 32, 1),
+                    &raw mut out
+                ),
+                PC_REJECTED
+            );
+            assert_eq!((out.locked, out.profile, out.anchor_count), (0, -1, 0));
+            assert!(take_string(pc_decoder_hint(dec)).is_some());
+            assert!(take_string(pc_decoder_reject_reason(dec)).is_some());
+            // NULL out is allowed.
+            assert_eq!(
+                yuv(
+                    dec,
+                    64,
+                    64,
+                    g,
+                    grey.len(),
+                    h,
+                    half.len(),
+                    (64, 32, 1),
+                    ptr::null_mut()
+                ),
+                PC_REJECTED
+            );
+            // NULL handle / planes.
+            assert_eq!(
+                yuv(
+                    ptr::null_mut(),
+                    64,
+                    64,
+                    g,
+                    grey.len(),
+                    h,
+                    half.len(),
+                    (64, 32, 1),
+                    ptr::null_mut()
+                ),
+                PC_ERR_NULL
+            );
+            assert_eq!(
+                yuv(
+                    dec,
+                    64,
+                    64,
+                    ptr::null(),
+                    0,
+                    h,
+                    half.len(),
+                    (64, 32, 1),
+                    ptr::null_mut()
+                ),
+                PC_ERR_NULL
+            );
+            assert_eq!(
+                yuv(
+                    dec,
+                    64,
+                    64,
+                    g,
+                    grey.len(),
+                    ptr::null(),
+                    0,
+                    (64, 32, 1),
+                    ptr::null_mut()
+                ),
+                PC_ERR_NULL
+            );
+            // Sizes: zero dimension, short buffer, stride below width, bad pixel stride.
+            assert_eq!(
+                yuv(
+                    dec,
+                    0,
+                    64,
+                    g,
+                    grey.len(),
+                    h,
+                    half.len(),
+                    (64, 32, 1),
+                    ptr::null_mut()
+                ),
+                PC_ERR_INVALID
+            );
+            assert_eq!(
+                yuv(
+                    dec,
+                    64,
+                    64,
+                    g,
+                    100,
+                    h,
+                    half.len(),
+                    (64, 32, 1),
+                    ptr::null_mut()
+                ),
+                PC_ERR_INVALID
+            );
+            assert_eq!(
+                yuv(
+                    dec,
+                    64,
+                    64,
+                    g,
+                    grey.len(),
+                    h,
+                    half.len(),
+                    (63, 32, 1),
+                    ptr::null_mut()
+                ),
+                PC_ERR_INVALID
+            );
+            assert_eq!(
+                yuv(
+                    dec,
+                    64,
+                    64,
+                    g,
+                    grey.len(),
+                    h,
+                    half.len(),
+                    (64, 32, 0),
+                    ptr::null_mut()
+                ),
+                PC_ERR_INVALID
+            );
+            assert_eq!(
+                yuv(
+                    dec,
+                    64,
+                    64,
+                    g,
+                    grey.len(),
+                    h,
+                    half.len(),
+                    (64, 32, 5),
+                    ptr::null_mut()
+                ),
+                PC_ERR_INVALID
+            );
+            assert_eq!(
+                yuv(
+                    dec,
+                    u32::MAX,
+                    u32::MAX,
+                    g,
+                    grey.len(),
+                    h,
+                    half.len(),
+                    (u32::MAX, 1, 2),
+                    ptr::null_mut()
+                ),
+                PC_ERR_INVALID
+            );
+
+            // RGBA.
+            let rgba = vec![200u8; 32 * 32 * 4];
+            assert_eq!(
+                pc_decoder_feed_rgba(dec, 32, 32, rgba.as_ptr(), rgba.len(), ptr::null_mut()),
+                PC_REJECTED
+            );
+            assert_eq!(
+                pc_decoder_feed_rgba(dec, 32, 32, rgba.as_ptr(), rgba.len() - 1, ptr::null_mut()),
+                PC_ERR_INVALID
+            );
+            assert_eq!(
+                pc_decoder_feed_rgba(dec, 0, 32, rgba.as_ptr(), rgba.len(), ptr::null_mut()),
+                PC_ERR_INVALID
+            );
+            assert_eq!(
+                pc_decoder_feed_rgba(dec, 32, 32, ptr::null(), 0, ptr::null_mut()),
+                PC_ERR_NULL
+            );
+            assert_eq!(
+                pc_decoder_feed_rgba(
+                    ptr::null_mut(),
+                    32,
+                    32,
+                    rgba.as_ptr(),
+                    rgba.len(),
+                    ptr::null_mut()
+                ),
+                PC_ERR_NULL
+            );
+            assert!(pc_decoder_hint(ptr::null()).is_null());
+            pc_decoder_free(dec);
         }
     }
 

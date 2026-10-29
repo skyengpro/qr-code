@@ -2,9 +2,8 @@
 //!
 //! The foreign-function surface of Particle Code: what the Flutter app (through
 //! `flutter_rust_bridge` v2) and the Tauri app (as a plain Rust dependency, or through the
-//! C ABI) call. All logic lives in `particlecode-core` (and, from phase 2,
-//! `particlecode-vision`); this crate only reshapes it into types that cross a language
-//! boundary cheaply.
+//! C ABI) call. All logic lives in `particlecode-core` and `particlecode-vision`;
+//! this crate only reshapes it into types that cross a language boundary cheaply.
 //!
 //! * [`api`] — flutter_rust_bridge-style API: opaque handles with methods
 //!   ([`api::encoder::ParticleEncoder`], [`api::decoder::ParticleDecoder`]) and plain DTOs.
@@ -26,11 +25,16 @@
 //! The README next to `Cargo.toml` documents the painter contract (coordinates, colors,
 //! draw order, timers).
 //!
-//! # Phase 2
+//! # Camera input
 //!
-//! Camera decoding (`ParticleDecoder::feed_yuv`) is not wired yet because it needs
-//! `particlecode-vision`; see the marked spot in [`api::decoder`].
+//! [`api::decoder::ParticleDecoder`] takes camera frames directly (`feed_yuv` for Android
+//! `YUV_420_888` / iOS NV12, `feed_rgba` for desktop and webcams) and runs
+//! `particlecode_vision` (locate, read) before feeding the receiver; `feed_symbols` accepts
+//! symbols classified elsewhere. The C ABI has `pc_decoder_feed_yuv` / `pc_decoder_feed_rgba`.
 
 pub mod api;
 pub mod capi;
 pub mod json;
+
+#[cfg(test)]
+mod testutil;

@@ -38,7 +38,24 @@ final info = enc.info();                       // profile, dots, block size, seg
 final frame = enc.frameAt(i, unixSeconds: nowSecs);   // FrameDto for the painter
 ```
 
-Receiver (phase 1, symbol level; phase 2 adds `feedYuv` for camera planes):
+Receiver, from camera planes (the camera plugin's `YUV_420_888` planes map straight onto
+the arguments; `uvPixelStride` is 2 for NV21/NV12 and 1 for I420):
+
+```dart
+final r = dec.feedYuv(width: w, height: h, y: p0.bytes, u: p1.bytes, v: p2.bytes,
+    yStride: p0.bytesPerRow, uvStride: p1.bytesPerRow, uvPixelStride: p1.bytesPerPixel);
+// r.locked, r.anchors (image px, for the overlay), r.sharpness, r.liveness,
+// r.progress, r.rejectReason, r.hint ("Too dark or too much glare ...")
+```
+
+For NV12 (iOS), pass the interleaved UV plane as `u` and the same bytes from offset 1 as
+`v`. The generated bindings copy each byte vector once, so call `feedYuv` on a worker
+isolate. A frame that cannot be located or read is a normal result, not an exception:
+`progress` is `rejected`, with `rejectReason` for logs and `hint` for the user. Keep the
+sharpest of the ~3 captures of each 100 ms data frame (`r.sharpness`) if you feed
+selectively.
+
+Symbol level, if the host classified the dots itself:
 
 ```dart
 final dec = ParticleDecoder();
@@ -59,7 +76,11 @@ Two options, to be picked after measuring which keeps 30 fps on the vendor's har
    `api::encoder::ParticleEncoder` / `api::decoder::ParticleDecoder` from `#[tauri::command]`
    functions. For the sender, expose one command per frame returning `FrameDto` (it is
    `Serialize`) or `frame_json`; the webview paints it on a canvas. The `ParticleEncoder`
-   is `Send + Sync`: keep it in Tauri state.
+   is `Send + Sync`: keep it in Tauri state. For the receiver, grab webcam frames as RGBA
+   (`getUserMedia` plus a canvas `getImageData`, or a native capture crate) and call
+   `ParticleDecoder::feed_rgba(width, height, rgba)` from a command; keep the decoder behind a
+   `Mutex` in Tauri state. Each call returns a `FrameResultDto` with the overlay anchors, the
+   progress and the hint text.
 2. **wasm (later).** `particlecode-core` is `no_std + alloc`, so the decoder can be built for
    `wasm32-unknown-unknown` and run in the webview next to the camera stream; that needs a
    wasm-bindgen wrapper and is not part of this crate yet.
@@ -99,6 +120,14 @@ int32_t st = pc_decoder_feed_symbols(dec, syms, NULL, n);  // PC_REJECTED / PC_A
   random / the wall clock; fixing all three makes frames deterministic.
 * Frame JSON is the serde form of the core `FrameSpec` (colors as indices, lattice
   coordinates `q`/`r` included). The `api` DTO (`FrameDto`) is the flattened painter form.
+* Camera frames: `pc_decoder_feed_yuv(dec, w, h, y, y_len, u, u_len, v, v_len, y_stride,
+  uv_stride, uv_pixel_stride, &out)` and `pc_decoder_feed_rgba(dec, w, h, rgba, len, &out)`
+  (desktop / webcam, Tauri). They return `PC_REJECTED` / `PC_ACCEPTED` / `PC_DONE`, or
+  `PC_ERR_NULL` / `PC_ERR_INVALID` for NULL pointers and sizes that do not fit the buffers.
+  `out` (optional) is a `PcFrameResult`: lock state, profile, shape, anchors in image px,
+  sharpness, liveness. `pc_decoder_reject_reason` and `pc_decoder_hint` give the technical
+  reason and the user-facing advice; `pc_decoder_progress` the counts. Camera memory is
+  borrowed, not copied (interleaved chroma is de-interleaved into a small scratch buffer).
 * The payload comes out of `pc_decoder_take_ready`: after `PC_DONE`, the concatenation of
   everything taken equals the payload.
 * A handle must not be used by two threads at once.
@@ -151,10 +180,3 @@ receiver measures). Hue `i` is `palette.hues[i]`; swatches are a hue index, `whi
 
 **Screen.** Force **screen brightness to maximum** while a code is shown and restore it
 afterwards; warn the user about night-light and color filters where the platform exposes them.
-
-## Phase 2: camera decoding
-
-`ParticleDecoder::feed_yuv(width, height, y, u, v, y_stride, uv_stride, uv_pixel_stride) ->
-FrameResultDto` will call `particlecode_vision::locate` and `read` and then feed the result to
-the same `Receiver` that `feed_symbols` uses. The marked spot is the `PHASE 2` comment in
-`src/api/decoder.rs`; the C ABI gets a matching `pc_decoder_feed_yuv`.
