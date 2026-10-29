@@ -35,6 +35,7 @@
 pub mod api;
 pub mod capi;
 pub mod json;
+pub mod native;
 
 #[cfg(test)]
 mod testutil;
