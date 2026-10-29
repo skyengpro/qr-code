@@ -195,6 +195,7 @@ impl BitReader<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
 
     pub(crate) fn sample() -> Header {
         Header {
@@ -222,6 +223,51 @@ mod tests {
         let mut b = sample().to_bytes();
         b[5] ^= 0x10;
         assert_eq!(Header::from_bytes(&b), Err(DecodeError::BadHeaderCrc));
+    }
+
+    fn confident(dots: &[u8; HEADER_SYMBOLS]) -> Vec<Sym3> {
+        dots.iter().map(|&v| Sym3::new(v)).collect()
+    }
+
+    #[test]
+    fn dots_roundtrip() {
+        let h = sample();
+        assert_eq!(Header::decode(&confident(&h.encode())), Ok(h));
+    }
+
+    #[test]
+    fn four_symbol_errors_are_corrected() {
+        let h = sample();
+        let mut dots = confident(&h.encode());
+        // Four different GF(2^6) symbols (dot pairs), one with both dots wrong.
+        dots[1].value ^= 5;
+        dots[8].value ^= 2;
+        dots[9].value ^= 7;
+        dots[21].value ^= 1;
+        dots[40].value ^= 6;
+        assert_eq!(Header::decode(&dots), Ok(h));
+    }
+
+    #[test]
+    fn a_whole_halo_with_zero_confidence_still_decodes() {
+        let h = sample();
+        for halo in 0..3 {
+            let mut dots = confident(&h.encode());
+            for d in &mut dots[halo * 16..halo * 16 + 16] {
+                *d = Sym3 { value: (d.value + 3) & 7, confidence: 0 };
+            }
+            assert_eq!(Header::decode(&dots), Ok(h), "halo {halo}");
+        }
+    }
+
+    #[test]
+    fn wrong_length_and_noise_are_rejected() {
+        assert!(matches!(
+            Header::decode(&[Sym3::new(0); 10]),
+            Err(DecodeError::WrongSymbolCount { expected: 48, got: 10 })
+        ));
+        // All-zero dots are a valid RS codeword but not a header: magic mismatch.
+        assert_eq!(Header::decode(&[Sym3::new(0); HEADER_SYMBOLS]), Err(DecodeError::BadMagic));
     }
 
     #[test]
