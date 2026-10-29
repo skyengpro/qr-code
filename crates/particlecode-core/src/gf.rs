@@ -100,7 +100,11 @@ impl Gf {
 
     /// Multiplicative inverse. `inv(0)` is 0.
     pub const fn inv(&self, a: u8) -> u8 {
-        if a == 0 { 0 } else { self.exp[self.order - self.log[a as usize] as usize] }
+        if a == 0 {
+            0
+        } else {
+            self.exp[self.order - self.log[a as usize] as usize]
+        }
     }
 
     /// `a^e`. `pow(0, 0)` is 1 and `pow(0, e > 0)` is 0.

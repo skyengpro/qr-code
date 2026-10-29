@@ -265,7 +265,10 @@ mod tests {
         for halo in 0..3 {
             let mut dots = confident(&h.encode());
             for d in &mut dots[halo * 16..halo * 16 + 16] {
-                *d = Sym3 { value: (d.value + 3) & 7, confidence: 0 };
+                *d = Sym3 {
+                    value: (d.value + 3) & 7,
+                    confidence: 0,
+                };
             }
             assert_eq!(Header::decode(&dots), Ok(h), "halo {halo}");
         }
@@ -275,10 +278,16 @@ mod tests {
     fn wrong_length_and_noise_are_rejected() {
         assert!(matches!(
             Header::decode(&[Sym3::new(0); 10]),
-            Err(DecodeError::WrongSymbolCount { expected: 48, got: 10 })
+            Err(DecodeError::WrongSymbolCount {
+                expected: 48,
+                got: 10
+            })
         ));
         // All-zero dots are a valid RS codeword but not a header: magic mismatch.
-        assert_eq!(Header::decode(&[Sym3::new(0); HEADER_SYMBOLS]), Err(DecodeError::BadMagic));
+        assert_eq!(
+            Header::decode(&[Sym3::new(0); HEADER_SYMBOLS]),
+            Err(DecodeError::BadMagic)
+        );
     }
 
     #[test]

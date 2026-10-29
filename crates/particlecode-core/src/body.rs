@@ -51,7 +51,11 @@ impl Keystream {
         let seed = (u64::from(key.session_id) << 32)
             | (u64::from(key.segment_index) << 16)
             | u64::from(key.packet_seed);
-        let mut ks = Keystream { state: seed ^ DOMAIN, word: 0, left: 0 };
+        let mut ks = Keystream {
+            state: seed ^ DOMAIN,
+            word: 0,
+            left: 0,
+        };
         // One scrambling round so neighbouring keys do not yield shifted copies of a stream.
         ks.state = ks.next_word();
         ks
@@ -95,9 +99,10 @@ impl BodyCodec {
         let count = coded_bytes.div_ceil(MAX_CODEWORD);
         let mut codes = Vec::with_capacity(count);
         let mut block_size = 0;
-        if let (Some(base), Some(longer)) =
-            (coded_bytes.checked_div(count), coded_bytes.checked_rem(count))
-        {
+        if let (Some(base), Some(longer)) = (
+            coded_bytes.checked_div(count),
+            coded_bytes.checked_rem(count),
+        ) {
             for c in 0..count {
                 let n = base + usize::from(c < longer);
                 let parity = (n * ecc.parity_per_255()).div_ceil(MAX_CODEWORD);
@@ -107,7 +112,13 @@ impl BodyCodec {
                 codes.push(code);
             }
         }
-        BodyCodec { dots, ecc, coded_bytes, block_size, codes }
+        BodyCodec {
+            dots,
+            ecc,
+            coded_bytes,
+            block_size,
+            codes,
+        }
     }
 
     /// Payload dots this codec covers.
@@ -165,7 +176,11 @@ impl BodyCodec {
     ///
     /// Panics if `data.len() != block_size()`.
     pub fn encode(&self, data: &[u8], key: WhitenKey) -> Vec<u8> {
-        assert_eq!(data.len(), self.block_size, "body data must be block_size() bytes");
+        assert_eq!(
+            data.len(),
+            self.block_size,
+            "body data must be block_size() bytes"
+        );
         let mut ks = Keystream::new(key);
         let whitened: Vec<u8> = data.iter().map(|&b| b ^ ks.next_byte()).collect();
 
@@ -175,8 +190,11 @@ impl BodyCodec {
             words.push(code.encode(&whitened[at..at + code.k()]));
             at += code.k();
         }
-        let stream: Vec<u8> =
-            self.interleave_order().into_iter().map(|(c, j)| words[c][j]).collect();
+        let stream: Vec<u8> = self
+            .interleave_order()
+            .into_iter()
+            .map(|(c, j)| words[c][j])
+            .collect();
 
         let used = self.stream_symbols();
         let mut symbols = unpack(&stream, used);
@@ -198,7 +216,10 @@ impl BodyCodec {
     /// and is retried without erasures if that fails. Never panics.
     pub fn decode(&self, symbols: &[Sym3], key: WhitenKey) -> Result<Vec<u8>, DecodeError> {
         if symbols.len() != self.dots {
-            return Err(DecodeError::WrongSymbolCount { expected: self.dots, got: symbols.len() });
+            return Err(DecodeError::WrongSymbolCount {
+                expected: self.dots,
+                got: symbols.len(),
+            });
         }
         let used = self.stream_symbols();
         let values: Vec<u8> = symbols[..used].iter().map(|s| s.value & 7).collect();
@@ -206,7 +227,11 @@ impl BodyCodec {
 
         // Stream byte `p` covers bits 8p..8p+8, i.e. symbols 8p/3 ..= (8p+7)/3.
         let confidence = |p: usize| -> u8 {
-            symbols[8 * p / 3..=(8 * p + 7) / 3].iter().map(|s| s.confidence).min().unwrap_or(0)
+            symbols[8 * p / 3..=(8 * p + 7) / 3]
+                .iter()
+                .map(|s| s.confidence)
+                .min()
+                .unwrap_or(0)
         };
 
         let mut words: Vec<Vec<u8>> = self.codes.iter().map(|c| vec![0u8; c.n()]).collect();
@@ -253,7 +278,11 @@ mod tests {
 
     impl Rng {
         fn next(&mut self) -> u64 {
-            let mut ks = Keystream { state: self.0, word: 0, left: 0 };
+            let mut ks = Keystream {
+                state: self.0,
+                word: 0,
+                left: 0,
+            };
             let w = ks.next_word();
             self.0 = ks.state;
             w
@@ -265,7 +294,11 @@ mod tests {
     }
 
     fn key(n: u16) -> WhitenKey {
-        WhitenKey { session_id: 0xBEEF ^ n, segment_index: n, packet_seed: n.wrapping_mul(7) }
+        WhitenKey {
+            session_id: 0xBEEF ^ n,
+            segment_index: n,
+            packet_seed: n.wrapping_mul(7),
+        }
     }
 
     fn payload(rng: &mut Rng, len: usize) -> Vec<u8> {
@@ -336,7 +369,11 @@ mod tests {
                 let syms = codec.encode(&data, key(3));
                 assert_eq!(syms.len(), dots);
                 assert!(syms.iter().all(|&s| s < 8));
-                assert_eq!(codec.decode(&certain(&syms), key(3)), Ok(data), "{dots} {ecc:?}");
+                assert_eq!(
+                    codec.decode(&certain(&syms), key(3)),
+                    Ok(data),
+                    "{dots} {ecc:?}"
+                );
             }
         }
     }
@@ -355,7 +392,11 @@ mod tests {
             hist[s as usize] += 1;
         }
         let expect = a.len() / 8;
-        assert!(hist.iter().all(|&h| h > expect * 3 / 4 && h < expect * 5 / 4), "{hist:?}");
+        assert!(
+            hist.iter()
+                .all(|&h| h > expect * 3 / 4 && h < expect * 5 / 4),
+            "{hist:?}"
+        );
         // Decoding with the wrong key gives garbage, not the payload.
         assert_ne!(codec.decode(&certain(&a), key(2)).unwrap(), zeros);
     }
@@ -415,7 +456,10 @@ mod tests {
         let codec = BodyCodec::new(2000, EccLevel::Normal);
         assert_eq!(
             codec.decode(&[Sym3::new(0); 10], key(0)),
-            Err(DecodeError::WrongSymbolCount { expected: 2000, got: 10 })
+            Err(DecodeError::WrongSymbolCount {
+                expected: 2000,
+                got: 10
+            })
         );
     }
 

@@ -62,7 +62,12 @@ impl ReedSolomon {
             }
             gen_poly = next;
         }
-        Ok(ReedSolomon { gf, n, parity, gen_poly })
+        Ok(ReedSolomon {
+            gf,
+            n,
+            parity,
+            gen_poly,
+        })
     }
 
     /// Codeword length `n`.
@@ -132,7 +137,10 @@ impl ReedSolomon {
     /// is not a field element. On failure `codeword` is left unchanged.
     pub fn decode(&self, codeword: &mut [u8], erasures: &[usize]) -> Result<usize, DecodeError> {
         if codeword.len() != self.n {
-            return Err(DecodeError::WrongSymbolCount { expected: self.n, got: codeword.len() });
+            return Err(DecodeError::WrongSymbolCount {
+                expected: self.n,
+                got: codeword.len(),
+            });
         }
         let gf = self.gf;
         if codeword.iter().any(|&c| !gf.contains(c)) {
@@ -311,7 +319,10 @@ pub fn header_encode(bytes: &[u8; 12]) -> [u8; HEADER_SYMBOLS] {
 /// are kept. If decoding with erasures fails it is retried once without.
 pub fn header_decode(symbols: &[Sym3]) -> Result<[u8; 12], DecodeError> {
     if symbols.len() != HEADER_SYMBOLS {
-        return Err(DecodeError::WrongSymbolCount { expected: HEADER_SYMBOLS, got: symbols.len() });
+        return Err(DecodeError::WrongSymbolCount {
+            expected: HEADER_SYMBOLS,
+            got: symbols.len(),
+        });
     }
     let mut code = [0u8; HEADER_N];
     let mut candidates = Vec::new();
@@ -390,7 +401,9 @@ mod tests {
     }
 
     fn random_data(rng: &mut Rng, gf: &Gf, k: usize) -> Vec<u8> {
-        (0..k).map(|_| (rng.next() as u8) & gf.order() as u8).collect()
+        (0..k)
+            .map(|_| (rng.next() as u8) & gf.order() as u8)
+            .collect()
     }
 
     /// Flip `pos` to a different value.
@@ -434,12 +447,21 @@ mod tests {
         cw[0] ^= 1;
         let before = cw.clone();
         assert_eq!(rs.decode(&mut cw, &[30]), Err(DecodeError::Uncorrectable));
-        assert_eq!(rs.decode(&mut cw, &[usize::MAX]), Err(DecodeError::Uncorrectable));
-        assert_eq!(rs.decode(&mut cw, &[0, 1, 2, 3, 4, 5, 6]), Err(DecodeError::Uncorrectable));
+        assert_eq!(
+            rs.decode(&mut cw, &[usize::MAX]),
+            Err(DecodeError::Uncorrectable)
+        );
+        assert_eq!(
+            rs.decode(&mut cw, &[0, 1, 2, 3, 4, 5, 6]),
+            Err(DecodeError::Uncorrectable)
+        );
         assert_eq!(cw, before, "failed decode leaves the word untouched");
         assert!(matches!(
             rs.decode(&mut cw[..10], &[]),
-            Err(DecodeError::WrongSymbolCount { expected: 30, got: 10 })
+            Err(DecodeError::WrongSymbolCount {
+                expected: 30,
+                got: 10
+            })
         ));
         // Duplicate erasure indices count once.
         assert_eq!(rs.decode(&mut cw, &[0, 0, 0]), Ok(1));
@@ -609,7 +631,10 @@ mod tests {
     fn header_wrong_length_is_rejected() {
         assert!(matches!(
             header_decode(&[Sym3::new(0); 47]),
-            Err(DecodeError::WrongSymbolCount { expected: 48, got: 47 })
+            Err(DecodeError::WrongSymbolCount {
+                expected: 48,
+                got: 47
+            })
         ));
     }
 
@@ -622,7 +647,10 @@ mod tests {
                 let bytes = sample_bytes(seed);
                 let mut dots = header_dots(&bytes);
                 for d in &mut dots[halo * 16..halo * 16 + 16] {
-                    *d = Sym3 { value: 7 - d.value, confidence: 0 };
+                    *d = Sym3 {
+                        value: 7 - d.value,
+                        confidence: 0,
+                    };
                 }
                 assert_eq!(header_decode(&dots), Ok(bytes), "halo {halo} seed {seed}");
             }
