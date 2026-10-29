@@ -1,8 +1,7 @@
 //! Command line definition (clap derive) and the small value parsers it uses.
 //!
 //! Adding a subcommand: add a variant to [`Command`], an argument struct here, a module
-//! with its logic and one arm in [`crate::run`]. The image decoder (`decode`) will be added
-//! that way once the vision crate can read pixels.
+//! with its logic and one arm in [`crate::run`].
 
 use std::path::PathBuf;
 
@@ -29,6 +28,8 @@ pub enum Command {
     Info(InfoArgs),
     /// Symbol-level self-test: session, simulated losses and errors, receiver.
     Roundtrip(RoundtripArgs),
+    /// Recover a payload from camera images (PNG files or directories of them).
+    Decode(DecodeArgs),
 }
 
 /// Lattice profile argument.
@@ -172,8 +173,9 @@ pub struct RoundtripArgs {
     /// Drop every N-th frame (0: none).
     #[arg(long, default_value_t = 0)]
     pub drop_every: u32,
-    /// Probability that a received symbol is replaced by a wrong one, `0.0..=1.0`.
-    #[arg(long, default_value_t = 0.0, value_parser = parse_rate)]
+    /// Probability that a received symbol is replaced by a wrong one, `0.0..=1.0`
+    /// (symbol-level only).
+    #[arg(long, default_value_t = 0.0, value_parser = parse_rate, conflicts_with = "camera")]
     pub error_rate: f64,
     /// Seed of the simulated losses and errors.
     #[arg(long, default_value_t = 1)]
@@ -184,6 +186,34 @@ pub struct RoundtripArgs {
     /// Print one line per frame.
     #[arg(short, long)]
     pub verbose: bool,
+    /// Image-level round trip: render each frame with breathing motion, degrade it like a
+    /// phone photo and decode it with the vision stage.
+    #[arg(long)]
+    pub camera: bool,
+    /// Camera blur sigma in pixels.
+    #[arg(long, default_value_t = 0.9, requires = "camera", value_parser = parse_non_negative)]
+    pub blur: f64,
+    /// Camera noise sigma (0..255 units).
+    #[arg(long, default_value_t = 4.0, requires = "camera", value_parser = parse_non_negative)]
+    pub noise: f64,
+    /// Camera tilt in degrees (`0..=80`).
+    #[arg(long, default_value_t = 12.0, requires = "camera", value_parser = parse_tilt)]
+    pub tilt: f64,
+}
+
+/// Arguments of `decode`.
+#[derive(Debug, Args)]
+pub struct DecodeArgs {
+    /// PNG files, or directories (every `*.png` in them, sorted by name), in feed order.
+    #[arg(required = true)]
+    pub inputs: Vec<PathBuf>,
+    /// Where to write the payload (default: standard output unless it is a terminal, else
+    /// `decoded.bin`).
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
+    /// One JSON object per image instead of a text line.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// Resolve a shape argument: a built-in name (`disc`, `rounded-square`, `heart`, `hexagon`,
@@ -250,6 +280,32 @@ pub fn parse_rate(s: &str) -> Result<f64, String> {
         Ok(v)
     } else {
         Err(format!("{s:?} is outside 0.0..=1.0"))
+    }
+}
+
+/// Parse a finite number `>= 0`.
+pub fn parse_non_negative(s: &str) -> Result<f64, String> {
+    let v: f64 = s
+        .trim()
+        .parse()
+        .map_err(|_| format!("{s:?} is not a number"))?;
+    if v.is_finite() && (0.0..=1000.0).contains(&v) {
+        Ok(v)
+    } else {
+        Err(format!("{s:?} must be between 0 and 1000"))
+    }
+}
+
+/// Parse a tilt angle in `0.0..=80.0` degrees.
+pub fn parse_tilt(s: &str) -> Result<f64, String> {
+    let v: f64 = s
+        .trim()
+        .parse()
+        .map_err(|_| format!("{s:?} is not a number"))?;
+    if (0.0..=80.0).contains(&v) {
+        Ok(v)
+    } else {
+        Err(format!("{s:?} is outside 0..=80 degrees"))
     }
 }
 
@@ -387,6 +443,40 @@ mod tests {
         assert!(parse(&["roundtrip", "in", "--error-rate", "2"]).is_err());
         assert!(parse(&["nonsense"]).is_err());
         assert!(parse(&[]).is_err());
+    }
+
+    #[test]
+    fn decode_and_camera_flags() {
+        let cli = parse(&["decode", "a.png", "dir", "-o", "out.bin", "--json"]).expect("parses");
+        let Command::Decode(d) = cli.command else {
+            panic!("not decode");
+        };
+        assert_eq!(d.inputs.len(), 2);
+        assert_eq!(d.output.as_deref(), Some(std::path::Path::new("out.bin")));
+        assert!(d.json);
+        assert!(parse(&["decode"]).is_err());
+        let cli = parse(&[
+            "roundtrip",
+            "f",
+            "--camera",
+            "--blur",
+            "1.5",
+            "--tilt",
+            "20",
+        ])
+        .expect("parses");
+        let Command::Roundtrip(r) = cli.command else {
+            panic!("not roundtrip");
+        };
+        assert!(r.camera);
+        assert!((r.blur - 1.5).abs() < f64::EPSILON && (r.noise - 4.0).abs() < f64::EPSILON);
+        assert!(
+            parse(&["roundtrip", "f", "--blur", "1"]).is_err(),
+            "needs --camera"
+        );
+        assert!(parse(&["roundtrip", "f", "--camera", "--error-rate", "0.1"]).is_err());
+        assert!(parse(&["roundtrip", "f", "--camera", "--tilt", "90"]).is_err());
+        assert!(parse(&["roundtrip", "f", "--camera", "--noise", "-1"]).is_err());
     }
 
     #[test]

@@ -9,15 +9,18 @@
 //! | [`encode`] | `encode`: payload to PNG / GIF / SVG / PNG sequence |
 //! | [`info`] | `info`: capacity tables |
 //! | [`roundtrip`] | `roundtrip`: symbol-level self-test through a lossy channel |
+//! | [`decode`] | `decode`: PNG images to payload; [`decode::Decoder`] is the image-level receiver |
+//! | [`camera`] | synthetic camera (render, degrade, decode) behind `roundtrip --camera` |
 //! | [`spec`] | [`SessionSpec`](spec::SessionSpec): the session knobs the commands share |
 //! | [`sample`] | sample CBOR payloads |
 //! | [`sheet`] | contact sheets |
 //!
 //! [`run`] is the whole program minus argument parsing and process exit, so it can be
-//! tested with in-memory writers. The image decoder will be one more subcommand: a
-//! `Decode` variant in [`cli::Command`], a `decode` module and one arm in [`run`].
+//! tested with in-memory writers.
 
+pub mod camera;
 pub mod cli;
+pub mod decode;
 pub mod encode;
 pub mod info;
 pub mod roundtrip;
@@ -74,6 +77,9 @@ pub fn run(cli: &Cli, stdout: &mut impl Write, stderr: &mut impl Write) -> Resul
         Command::Roundtrip(args) => {
             let payload = read_payload(&args.input)?;
             roundtrip::command(args, &payload, stdout)?;
+        }
+        Command::Decode(args) => {
+            decode::command(args, decode::stdout_is_terminal(), stdout, stderr)?;
         }
     }
     Ok(())
