@@ -145,6 +145,7 @@ public final class ParticleDecoder {
         }
     }
 
+    @usableFromInline
     static func unixSeconds(_ date: Date) -> UInt64 {
         UInt64(max(0, date.timeIntervalSince1970))
     }
