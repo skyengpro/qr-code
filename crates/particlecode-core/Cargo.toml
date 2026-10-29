@@ -11,7 +11,7 @@ authors.workspace = true
 [features]
 default = ["std"]
 # `std` adds OS randomness for `Session::new` and `std::error::Error` impls.
-std = ["dep:getrandom", "raptorq/std", "thiserror/std"]
+std = ["dep:getrandom", "thiserror/std"]
 # Serde derives on plain-data types (FrameSpec, Header, ...) for painters and manifests.
 serde = ["dep:serde"]
 
@@ -23,6 +23,13 @@ sha2.workspace = true
 thiserror.workspace = true
 getrandom = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
+
+# raptorq's `std` feature switches on runtime SIMD dispatch (SSE/AVX, aarch64 NEON). On
+# 32-bit ARM it does not compile on stable (the ARM NEON intrinsics are unstable) and there is
+# no SIMD path behind it anyway, so it is requested everywhere except 32-bit ARM (Android
+# armeabi-v7a, Raspberry Pi) and bare metal.
+[target.'cfg(not(any(target_arch = "arm", target_os = "none")))'.dependencies]
+raptorq = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 proptest.workspace = true
