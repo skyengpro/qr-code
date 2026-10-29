@@ -17,13 +17,17 @@ use alloc::vec::Vec;
 
 use raptorq::{EncodingPacket, PayloadId, SourceBlockDecoder};
 
+use crate::body::BodyCodec;
 use crate::error::DecodeError;
 use crate::header::{HEADER_SYMBOLS, Header};
+use crate::layout::DotOrder;
 use crate::profile::Palette;
+use crate::profile::{EccLevel, Profile};
 use crate::segment::{
     CRC_LEN, ESI_SPACE, MAX_BLOCK_SIZE, MAX_PAYLOAD, MAX_SEGMENT_KB_LOG2, MAX_SEGMENTS,
     crc_matches, framed_is_valid, source_symbols, transmission_info,
 };
+use crate::shapes::ShapeTable;
 use crate::symbol::Sym3;
 
 /// What happened to one packet or frame.
@@ -351,14 +355,37 @@ impl Locked {
 #[derive(Debug, Default)]
 pub struct Receiver {
     packets: PacketReceiver,
+    shapes: ShapeTable,
+    /// Body layout of the locked session: (profile, shape, static) → order + codec.
+    layout: Option<BodyLayout>,
+}
+
+#[derive(Debug)]
+struct BodyLayout {
+    key: (Profile, u8, bool),
+    order: DotOrder,
+    codec: BodyCodec,
 }
 
 impl Receiver {
-    /// A receiver that has not seen any frame yet.
+    /// A receiver that has not seen any frame yet, using the built-in shape table.
     pub fn new() -> Receiver {
+        Receiver::with_shapes(ShapeTable::builtin())
+    }
+
+    /// A receiver using a custom shape table (must match the sender's table version).
+    pub fn with_shapes(shapes: ShapeTable) -> Receiver {
         Receiver {
             packets: PacketReceiver::new(),
+            shapes,
+            layout: None,
         }
+    }
+
+    /// The dot order the body of frames with this header has, if the shape is known.
+    /// The vision stage uses this to know which lattice points to sample.
+    pub fn dot_order(&self, profile: Profile, shape_id: u8) -> Option<DotOrder> {
+        self.shapes.dot_order(shape_id, profile)
     }
 
     /// Feed one frame's symbols: [`HEADER_SYMBOLS`] header dots followed by the body dots
@@ -380,16 +407,35 @@ impl Receiver {
     /// Feed a frame whose header the caller has already decoded (e.g. the vision stage read
     /// and checked it) together with its body dots.
     ///
-    /// Wiring still to do (needs `shapes` and `body`): reject an unknown shape id or shape
-    /// table mismatch, build the `DotOrder` for the header's (profile, shape) (cache it per
-    /// session), check `body.len() == order.len()`, run `BodyCodec::decode` with
-    /// `WhitenKey { session_id, segment_index, packet_seed }` (rejecting on
-    /// [`DecodeError::Uncorrectable`]) and pass the resulting `T` bytes to
-    /// [`PacketReceiver::push`].
-    #[allow(clippy::todo, clippy::unused_self)]
+    /// Rejects unknown shapes and shape table mismatches, checks the body length against
+    /// the (profile, shape) dot order, and Reed-Solomon decodes the body before handing the
+    /// fountain symbol to the packet layer.
     pub fn feed_decoded(&mut self, header: &Header, body: &[Sym3]) -> Progress {
-        let _ = (header, body, &mut self.packets);
-        todo!("wire BodyCodec::decode and the shape table")
+        if header.shape_table_version != self.shapes.version() {
+            return Progress::Rejected(DecodeError::ShapeTableMismatch(header.shape_table_version));
+        }
+        let key = (header.profile, header.shape_id, header.is_static);
+        if self.layout.as_ref().is_none_or(|l| l.key != key) {
+            let Some(order) = self.shapes.dot_order(header.shape_id, header.profile) else {
+                return Progress::Rejected(DecodeError::UnknownShape(header.shape_id));
+            };
+            let codec = BodyCodec::new(order.len(), EccLevel::for_static(header.is_static));
+            self.layout = Some(BodyLayout { key, order, codec });
+        }
+        let layout = self.layout.as_ref().expect("layout was just set");
+        if body.len() != layout.order.len() {
+            return Progress::Rejected(DecodeError::WrongSymbolCount {
+                expected: layout.order.len(),
+                got: body.len(),
+            });
+        }
+        match layout
+            .codec
+            .decode(body, crate::session::whiten_key(header))
+        {
+            Ok(symbol) => self.packets.push(header, &symbol),
+            Err(e) => Progress::Rejected(e),
+        }
     }
 
     /// Payload bytes newly delivered in order since the last call; see

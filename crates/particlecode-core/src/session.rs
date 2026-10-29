@@ -6,9 +6,8 @@
 //!   `RaptorQ` and the packet schedule. A packet is a [`Header`] plus exactly one encoding
 //!   symbol of `T` bytes (`T` is the body codec's block size).
 //! * [`Session`] — the *symbol layer*. Wraps a [`PacketSession`] with the session key, the
-//!   dot order and the particle liveness, and turns packets into [`FrameSpec`]s. The
-//!   body codec (Reed-Solomon, whitening, interleaving) is wired in by the integrator; see
-//!   the `todo!` markers.
+//!   dot order, the body codec (whitening, Reed-Solomon, interleaving) and the particle
+//!   liveness, and turns packets into [`FrameSpec`]s.
 //!
 //! # Data layer recap
 //!
@@ -28,16 +27,18 @@ use alloc::vec::Vec;
 
 use raptorq::SourceBlockEncoder;
 
+use crate::body::{BodyCodec, WhitenKey};
 use crate::error::EncodeError;
 use crate::frame::FrameSpec;
 use crate::header::Header;
 use crate::layout::DotOrder;
 use crate::liveness;
-use crate::profile::{Palette, Profile};
+use crate::profile::{EccLevel, Palette, Profile};
 use crate::segment::{
     CRC_LEN, MAX_BLOCK_SIZE, MAX_PAYLOAD, MAX_SEGMENT_KB_LOG2, MAX_SEGMENTS, packet_seed,
     source_block, source_symbols, transmission_info,
 };
+use crate::shapes::{self, ShapeTable};
 
 /// Physical display information used to pick a profile.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -300,6 +301,7 @@ impl PacketSession {
 pub struct Session {
     packets: PacketSession,
     order: DotOrder,
+    codec: BodyCodec,
     key: [u8; 32],
     clock_origin_unix: u64,
     fps: u16,
@@ -315,9 +317,17 @@ impl Session {
         clock_origin_unix: u64,
         fps: u16,
     ) -> Session {
+        let ecc = EccLevel::for_static(packets.packet(0).0.is_static);
+        let codec = BodyCodec::new(order.len(), ecc);
+        assert_eq!(
+            codec.block_size(),
+            packets.block_size(),
+            "order does not match packets"
+        );
         Session {
             packets,
             order,
+            codec,
             key,
             clock_origin_unix,
             fps: fps.max(1),
@@ -346,16 +356,7 @@ impl Session {
     /// `clock_origin_unix` is the Unix second at which frame 0 is shown; frame `i` carries
     /// the rolling liveness value of second `clock_origin_unix + i / fps`.
     ///
-    /// Wiring still to do (needs `shapes` and `body`): pick the profile
-    /// (`config.profile` or [`choose_profile`]), resolve `config.shape` to a mask with the
-    /// shape table (`Require` fails with [`EncodeError::UnknownShape`], `Prefer` / `Auto`
-    /// fall back), build the [`DotOrder`], `BodyCodec::new(order.len(),
-    /// EccLevel::for_static(config.is_static))`, then
-    /// `PacketSession::new(payload, codec.block_size(), base_header, &config)` with
-    /// `base_header` filled from the profile, shape id, palette, static flag, session id and
-    /// shape table version; for a static session whose payload does not fit the chosen
-    /// shape, `Auto` should try the next shape.
-    #[allow(clippy::todo)]
+    /// Uses the built-in shape table; see [`Session::with_shapes`] for custom shapes.
     pub fn with_identity(
         payload: &[u8],
         display: DisplayInfo,
@@ -364,11 +365,95 @@ impl Session {
         key: [u8; 32],
         clock_origin_unix: u64,
     ) -> Result<Session, EncodeError> {
+        let table = ShapeTable::builtin();
+        Session::with_shapes(
+            payload,
+            display,
+            config,
+            &table,
+            session_id,
+            key,
+            clock_origin_unix,
+        )
+    }
+
+    /// [`Session::with_identity`] with an explicit shape table (custom shapes 32–255).
+    ///
+    /// Shape resolution follows [`ShapeChoice`]: `Require(id)` fails with
+    /// [`EncodeError::UnknownShape`] (or [`EncodeError::DoesNotFit`] for a static session
+    /// whose payload does not fit one frame); `Prefer(id)` falls back to the disc;
+    /// `Auto(ids)` takes the first listed shape that exists and fits, else the disc.
+    pub fn with_shapes(
+        payload: &[u8],
+        display: DisplayInfo,
+        config: &SessionConfig,
+        table: &ShapeTable,
+        session_id: u16,
+        key: [u8; 32],
+        clock_origin_unix: u64,
+    ) -> Result<Session, EncodeError> {
         let profile = config
             .profile
             .unwrap_or_else(|| choose_profile(&display, config.min_pitch_mm));
-        let _ = (payload, profile, session_id, key, clock_origin_unix);
-        todo!("wire BodyCodec and ShapeTable: see the doc comment")
+        let ecc = EccLevel::for_static(config.is_static);
+        // A static frame holds payload ‖ CRC-32 ‖ segment CRC-32 in one symbol.
+        let capacity = |order: &DotOrder| BodyCodec::new(order.len(), ecc).block_size();
+        let fits = |order: &DotOrder| !config.is_static || payload.len() + 8 <= capacity(order);
+        let candidates: Vec<u8> = match &config.shape {
+            ShapeChoice::Require(id) => alloc::vec![*id],
+            ShapeChoice::Prefer(id) => alloc::vec![*id, shapes::DISC],
+            ShapeChoice::Auto(ids) => ids.iter().copied().chain([shapes::DISC]).collect(),
+        };
+        let chosen = candidates
+            .iter()
+            .find_map(|&id| table.dot_order(id, profile).filter(fits).map(|o| (id, o)));
+        let Some((shape_id, order)) = chosen else {
+            // Nothing usable: unknown shape, or nothing fits one static frame.
+            let order = candidates
+                .iter()
+                .find_map(|&id| table.dot_order(id, profile))
+                .ok_or(EncodeError::UnknownShape(candidates[0]))?;
+            return Err(EncodeError::DoesNotFit {
+                need: payload.len() + 8,
+                capacity: capacity(&order),
+            });
+        };
+        let codec = BodyCodec::new(order.len(), ecc);
+        let base_header = Header {
+            shape_table_version: table.version(),
+            profile,
+            palette: config.palette,
+            is_static: config.is_static,
+            shape_id,
+            session_id,
+            payload_len: 0,
+            segment_kb_log2: config.segment_kb_log2,
+            segment_index: 0,
+            packet_seed: 0,
+        };
+        let packets = PacketSession::new(payload, codec.block_size(), base_header, config)?;
+        Ok(Session::from_parts(
+            packets,
+            order,
+            key,
+            clock_origin_unix,
+            config.fps,
+        ))
+    }
+
+    /// Profile of every frame.
+    pub fn profile(&self) -> Profile {
+        self.order.profile()
+    }
+
+    /// Payload bytes carried per frame (the `RaptorQ` symbol size `T`).
+    pub fn block_size(&self) -> usize {
+        self.codec.block_size()
+    }
+
+    /// The dot order (profile × shape) every frame uses.
+    pub fn dot_order(&self) -> &DotOrder {
+        &self.order
     }
 
     /// Session id carried by every header.
@@ -415,10 +500,17 @@ impl Session {
     /// Whiten, Reed-Solomon protect, interleave and map one symbol to `order.len()` dot
     /// symbols (`BodyCodec::encode` with `WhitenKey { session_id, segment_index,
     /// packet_seed }`).
-    #[allow(clippy::todo, clippy::unused_self)]
     fn encode_body(&self, header: &Header, block: &[u8]) -> Vec<u8> {
-        let _ = (header, block);
-        todo!("wire BodyCodec::encode")
+        self.codec.encode(block, whiten_key(header))
+    }
+}
+
+/// The whitening key of a frame.
+pub(crate) fn whiten_key(header: &Header) -> WhitenKey {
+    WhitenKey {
+        session_id: header.session_id,
+        segment_index: header.segment_index,
+        packet_seed: header.packet_seed,
     }
 }
 
