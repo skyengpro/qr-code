@@ -1,1 +1,2 @@
 msrv = "1.88"
+doc-valid-idents = ["RaptorQ", "CbCr", "YCbCr", "sRGB", "CustomPainter", "WebGL", "..", ]

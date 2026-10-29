@@ -1,5 +1,7 @@
 //! 3-bit dot symbols.
 
+use alloc::vec::Vec;
+
 /// One dot's worth of data: 2 bits of color, 1 bit of size, plus the classifier's
 /// confidence. The encoder always emits confidence 255.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -15,7 +17,10 @@ pub struct Sym3 {
 impl Sym3 {
     /// A certain symbol (what the encoder produces).
     pub const fn new(value: u8) -> Sym3 {
-        Sym3 { value: value & 7, confidence: 255 }
+        Sym3 {
+            value: value & 7,
+            confidence: 255,
+        }
     }
 
     /// Build from a color index (`0..4`) and size bit (0 small, 1 large).
@@ -34,14 +39,18 @@ impl Sym3 {
     }
 
     /// Same value with a given confidence.
+    #[must_use]
     pub const fn with_confidence(self, confidence: u8) -> Sym3 {
-        Sym3 { value: self.value, confidence }
+        Sym3 {
+            value: self.value,
+            confidence,
+        }
     }
 }
 
 /// Pack 3-bit symbols MSB-first into bytes. Trailing bits that do not fill a byte are dropped.
-pub fn pack(symbols: &[u8]) -> alloc::vec::Vec<u8> {
-    let mut out = alloc::vec::Vec::with_capacity(symbols.len() * 3 / 8);
+pub fn pack(symbols: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(symbols.len() * 3 / 8);
     let mut acc: u32 = 0;
     let mut bits = 0u32;
     for &s in symbols {
@@ -57,8 +66,8 @@ pub fn pack(symbols: &[u8]) -> alloc::vec::Vec<u8> {
 }
 
 /// Unpack bytes MSB-first into `count` 3-bit symbols. Missing trailing bits are zero.
-pub fn unpack(bytes: &[u8], count: usize) -> alloc::vec::Vec<u8> {
-    let mut out = alloc::vec::Vec::with_capacity(count);
+pub fn unpack(bytes: &[u8], count: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(count);
     for i in 0..count {
         let bit = i * 3;
         let mut v = 0u8;
@@ -77,7 +86,7 @@ mod tests {
 
     #[test]
     fn pack_unpack_roundtrip() {
-        let bytes: alloc::vec::Vec<u8> = (0..=255u8).collect();
+        let bytes: Vec<u8> = (0..=255u8).collect();
         let n = bytes.len() * 8 / 3;
         let syms = unpack(&bytes, n);
         let back = pack(&syms);

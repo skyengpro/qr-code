@@ -104,8 +104,12 @@ impl Point {
     }
 
     /// Point at `radius` and `angle` (radians) around `self`.
+    #[must_use]
     pub fn polar(self, radius: f64, angle: f64) -> Point {
-        Point::new(self.x + radius * libm::cos(angle), self.y + radius * libm::sin(angle))
+        Point::new(
+            self.x + radius * libm::cos(angle),
+            self.y + radius * libm::sin(angle),
+        )
     }
 
     /// Euclidean distance.
@@ -136,7 +140,11 @@ pub fn hero_anchor(profile: Profile, i: usize) -> Point {
 
 /// The three hero anchor centers.
 pub fn hero_anchors(profile: Profile) -> [Point; 3] {
-    [hero_anchor(profile, 0), hero_anchor(profile, 1), hero_anchor(profile, 2)]
+    [
+        hero_anchor(profile, 0),
+        hero_anchor(profile, 1),
+        hero_anchor(profile, 2),
+    ]
 }
 
 /// Center of the center anchor (the origin, which is also a lattice point).
@@ -257,7 +265,11 @@ impl Lattice {
             let q_min = libm::ceil(-f - f64::from(r) / 2.0 - 1e-9) as i32;
             let q_max = libm::floor(f - f64::from(r) / 2.0 + 1e-9) as i32;
             for q in q_min..=q_max {
-                points.push(LatticePoint { q, r, at: axial_to_point(q, r) });
+                points.push(LatticePoint {
+                    q,
+                    r,
+                    at: axial_to_point(q, r),
+                });
             }
         }
         Lattice { profile, points }
@@ -300,7 +312,9 @@ pub fn from_design_box(profile: Profile, x: f64, y: f64) -> Point {
 /// Whether a frame point lies inside an anchor keep-out (hero or center).
 pub fn in_keepout(profile: Profile, p: Point) -> bool {
     p.norm() < dims::CENTER_KEEPOUT
-        || hero_anchors(profile).iter().any(|a| a.dist(p) < dims::HERO_KEEPOUT)
+        || hero_anchors(profile)
+            .iter()
+            .any(|a| a.dist(p) < dims::HERO_KEEPOUT)
 }
 
 /// The payload-carrying dots of a (profile, mask) pair, in serpentine symbol order.
@@ -318,7 +332,11 @@ impl DotOrder {
     /// Build the order. `mask[k]` says whether `lattice.points()[k]` has ink; it must have
     /// the same length as the lattice.
     pub fn new(lattice: &Lattice, mask: &[bool]) -> DotOrder {
-        assert_eq!(mask.len(), lattice.len(), "mask length must match the lattice");
+        assert_eq!(
+            mask.len(),
+            lattice.len(),
+            "mask length must match the lattice"
+        );
         let profile = lattice.profile();
         let pts = lattice.points();
         let mut points = Vec::with_capacity(pts.len());
@@ -360,7 +378,11 @@ impl DotOrder {
 
     /// Outermost extent of all ink (data dots, halos) from the frame center.
     pub fn ink_extent(&self) -> f64 {
-        let dots = self.points.iter().map(|p| p.at.norm() + dims::DOT_R_LARGE).fold(0.0, f64::max);
+        let dots = self
+            .points
+            .iter()
+            .map(|p| p.at.norm() + dims::DOT_R_LARGE)
+            .fold(0.0, f64::max);
         let halo = anchor_radius(self.profile) + dims::HEADER_RING_R + dims::DOT_R_LARGE;
         dots.max(halo)
     }
@@ -385,9 +407,11 @@ impl ParticleBand {
     /// Band clear of all ink up to `ink_extent`.
     pub fn for_extent(profile: Profile, ink_extent: f64) -> ParticleBand {
         let f = profile.field_half();
-        let inner =
-            (dims::PARTICLE_BAND_MIN_FRAC * f).max(ink_extent + dims::PARTICLE_CLEARANCE);
-        ParticleBand { inner, outer: inner + dims::PARTICLE_BAND_WIDTH_FRAC * f }
+        let inner = (dims::PARTICLE_BAND_MIN_FRAC * f).max(ink_extent + dims::PARTICLE_CLEARANCE);
+        ParticleBand {
+            inner,
+            outer: inner + dims::PARTICLE_BAND_WIDTH_FRAC * f,
+        }
     }
 
     /// Middle radius of the band.
@@ -418,7 +442,9 @@ pub fn particle_angle(k: usize, sector: u8) -> f64 {
 
 /// Sector (`0..16`) of an angle on particle `k`'s arc, or `None` if outside the arc.
 pub fn particle_sector(k: usize, angle: f64) -> Option<u8> {
-    let rel = (angle - particle_arc_start(k)).rem_euclid(2.0 * PI);
+    let tau = 2.0 * PI;
+    let rel = angle - particle_arc_start(k);
+    let rel = rel - tau * libm::floor(rel / tau);
     let s = libm::floor(rel / particle_sector_width());
     (s >= 0.0 && s < dims::PARTICLE_SECTORS as f64).then_some(s as u8)
 }
@@ -429,14 +455,20 @@ mod tests {
 
     #[test]
     fn disc_capacity_matches_spec_ballpark() {
-        for (profile, lo, hi) in
-            [(Profile::S, 1700, 2100), (Profile::M, 4200, 4700), (Profile::L, 7900, 8400)]
-        {
+        for (profile, lo, hi) in [
+            (Profile::S, 1700, 2100),
+            (Profile::M, 4200, 4700),
+            (Profile::L, 7900, 8400),
+        ] {
             let lattice = Lattice::new(profile);
             let f = profile.field_half();
             let mask: Vec<bool> = lattice.points().iter().map(|p| p.at.norm() <= f).collect();
             let order = DotOrder::new(&lattice, &mask);
-            assert!((lo..hi).contains(&order.len()), "{profile:?}: {}", order.len());
+            assert!(
+                (lo..hi).contains(&order.len()),
+                "{profile:?}: {}",
+                order.len()
+            );
         }
     }
 
@@ -449,7 +481,10 @@ mod tests {
             for j in 0..HEADER_DOTS {
                 let h = header_dot(profile, j);
                 for p in order.points() {
-                    assert!(h.dist(p.at) >= 2.0 * dims::DOT_R_LARGE, "{profile:?} header {j}");
+                    assert!(
+                        h.dist(p.at) >= 2.0 * dims::DOT_R_LARGE,
+                        "{profile:?} header {j}"
+                    );
                 }
             }
         }
@@ -460,7 +495,11 @@ mod tests {
         let lattice = Lattice::new(Profile::S);
         let mask = alloc::vec![true; lattice.len()];
         let order = DotOrder::new(&lattice, &mask);
-        let kept = lattice.points().iter().filter(|p| !in_keepout(Profile::S, p.at)).count();
+        let kept = lattice
+            .points()
+            .iter()
+            .filter(|p| !in_keepout(Profile::S, p.at))
+            .count();
         assert_eq!(order.len(), kept);
         // Consecutive dots within a row are neighbours.
         let pts = order.points();

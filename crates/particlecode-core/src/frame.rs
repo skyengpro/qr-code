@@ -47,7 +47,11 @@ pub struct Dot {
 impl Dot {
     /// Rest radius of the dot (before any animation).
     pub fn radius(&self) -> f64 {
-        if self.size == 0 { dims::DOT_R_SMALL } else { dims::DOT_R_LARGE }
+        if self.size == 0 {
+            dims::DOT_R_SMALL
+        } else {
+            dims::DOT_R_LARGE
+        }
     }
 }
 
@@ -130,7 +134,13 @@ impl FrameSpec {
             .enumerate()
             .map(|(j, &s)| {
                 let s = Sym3::new(s);
-                Dot { q: 0, r: 0, at: layout::header_dot(profile, j), color: s.color(), size: s.size() }
+                Dot {
+                    q: 0,
+                    r: 0,
+                    at: layout::header_dot(profile, j),
+                    color: s.color(),
+                    size: s.size(),
+                }
             })
             .collect();
 
@@ -140,14 +150,23 @@ impl FrameSpec {
             .zip(body_symbols)
             .map(|(p, &s)| {
                 let s = Sym3::new(s);
-                Dot { q: p.q, r: p.r, at: p.at, color: s.color(), size: s.size() }
+                Dot {
+                    q: p.q,
+                    r: p.r,
+                    at: p.at,
+                    color: s.color(),
+                    size: s.size(),
+                }
             })
             .collect();
 
         let particles = particle_sectors
             .iter()
             .enumerate()
-            .map(|(k, &sector)| ParticleSpec { sector, angle: layout::particle_angle(k, sector) })
+            .map(|(k, &sector)| ParticleSpec {
+                sector,
+                angle: layout::particle_angle(k, sector),
+            })
             .collect();
 
         FrameSpec {
@@ -166,12 +185,18 @@ impl FrameSpec {
 
     /// Body symbols in dot order (what a perfect decoder would read).
     pub fn body_symbols(&self) -> Vec<Sym3> {
-        self.dots.iter().map(|d| Sym3::from_parts(d.color, d.size)).collect()
+        self.dots
+            .iter()
+            .map(|d| Sym3::from_parts(d.color, d.size))
+            .collect()
     }
 
     /// Header symbols in header-dot order.
     pub fn header_symbols(&self) -> Vec<Sym3> {
-        self.header_dots.iter().map(|d| Sym3::from_parts(d.color, d.size)).collect()
+        self.header_dots
+            .iter()
+            .map(|d| Sym3::from_parts(d.color, d.size))
+            .collect()
     }
 
     /// Header followed by body symbols: the input [`crate::Receiver::feed`] expects.

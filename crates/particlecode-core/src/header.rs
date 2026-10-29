@@ -81,14 +81,19 @@ impl Header {
     /// Length of segment `index`'s slice of the framed payload.
     pub fn segment_len(&self, index: usize) -> usize {
         let start = index * self.segment_size();
-        self.framed_len().saturating_sub(start).min(self.segment_size())
+        self.framed_len()
+            .saturating_sub(start)
+            .min(self.segment_size())
     }
 
     /// Pack into 12 bytes (96 bits), computing the CRC. Field values are masked to width.
     pub fn to_bytes(&self) -> [u8; 12] {
         let mut w = BitWriter::default();
         w.put(u64::from(MAGIC), 6);
-        w.put(u64::from((FORMAT_VERSION << 2) | (self.shape_table_version & 3)), 4);
+        w.put(
+            u64::from((FORMAT_VERSION << 2) | (self.shape_table_version & 3)),
+            4,
+        );
         w.put(u64::from(self.profile.code()), 2);
         w.put(u64::from(self.palette == Palette::Hues8), 1);
         w.put(u64::from(self.is_static), 1);
@@ -118,7 +123,11 @@ impl Header {
             return Err(DecodeError::UnsupportedVersion(version >> 2));
         }
         let profile = Profile::from_code(r.get(2) as u8).ok_or(DecodeError::BadProfile)?;
-        let palette = if r.get(1) == 1 { Palette::Hues8 } else { Palette::Hues4 };
+        let palette = if r.get(1) == 1 {
+            Palette::Hues8
+        } else {
+            Palette::Hues4
+        };
         let header = Header {
             shape_table_version: version & 3,
             profile,
@@ -132,7 +141,9 @@ impl Header {
             packet_seed: r.get(12) as u16,
         };
         if usize::from(header.segment_index) >= header.segment_count() {
-            return Err(DecodeError::Inconsistent("segment index beyond segment count"));
+            return Err(DecodeError::Inconsistent(
+                "segment index beyond segment count",
+            ));
         }
         Ok(header)
     }
@@ -226,7 +237,10 @@ mod tests {
 
     #[test]
     fn segments() {
-        let h = Header { payload_len: 8192, ..sample() };
+        let h = Header {
+            payload_len: 8192,
+            ..sample()
+        };
         assert_eq!(h.segment_count(), 2);
         assert_eq!(h.segment_len(1), 4);
     }

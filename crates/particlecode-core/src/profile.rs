@@ -84,7 +84,11 @@ impl EccLevel {
 
     /// ECC level implied by the header's `static` flag.
     pub const fn for_static(is_static: bool) -> EccLevel {
-        if is_static { EccLevel::High } else { EccLevel::Normal }
+        if is_static {
+            EccLevel::High
+        } else {
+            EccLevel::Normal
+        }
     }
 }
 
