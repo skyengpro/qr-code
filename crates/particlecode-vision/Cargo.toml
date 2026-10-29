@@ -1,0 +1,19 @@
+[package]
+name = "particlecode-vision"
+description = "Particle Code vision: anchor detection, homography, color calibration, lattice sampling and symbol classification."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+particlecode-core = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+particlecode-render.workspace = true
+proptest.workspace = true
+
+[lints]
+workspace = true

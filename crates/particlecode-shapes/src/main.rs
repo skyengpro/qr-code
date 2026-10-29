@@ -1,0 +1,2 @@
+//! STUB.
+fn main() {}
