@@ -79,13 +79,19 @@ is 8 erasures, which the code still corrects. Guaranteed: 4 symbol errors (4–8
 ## Data layer
 
 * Framed payload = `payload ‖ CRC-32(payload)`; header `payload length` is the bare
-  payload length.
+  payload length. Both CRC-32s (payload and segment) are appended big-endian.
 * Segment `s` = framed bytes `[s·S, (s+1)·S)`. Each segment is one RaptorQ source block
   over `segment ‖ CRC-32(segment)` with symbol size `T` and alignment 1, so a completed
   segment is verified on its own before delivery.
 * Schedule: pass `k`, segment `s` emits ESIs `k·(K_s + r) .. (k+1)·(K_s + r)` mod 4096,
   `r = 2` by default. Pass 0 starts with the `K_s` systematic source symbols.
 * The receiver locks onto the first session id it sees and drops other sessions.
+* Static sessions are one frame: one segment with `K = 1`, `r = 0`, so
+  `payload + 8 ≤ T` (payload CRC + segment CRC).
+* `ShapeChoice`: `Require(id)` fails if the shape is unknown or (static) the payload does not
+  fit; `Prefer(id)` falls back to the disc; `Auto(ids)` takes the first listed shape that
+  fits, then the disc. (The spec says "the largest shape that fits"; preference order is
+  more predictable, and the caller controls it.)
 
 ## Particles and liveness
 
@@ -101,6 +107,30 @@ the backend). The data path never depends on particles.
 Built-in shapes (ids 0–30) are defined analytically in `core::shapes` and evaluated at
 lattice points, so they are identical in every app without shipping bitmaps. Custom shapes
 (ids 32–255) come from `shapes.bin`, produced by the `particlecode-shapes` tool.
+
+## Vision decoder
+
+The spec's pipeline, with these refinements (details in `particlecode-vision`'s crate docs):
+
+* **Lock.** Hero anchors are concentric (core, ring) dark components, area ratio ≈ 6, found
+  with a `pixel < α · local mean` threshold. A candidate triple is accepted only after a
+  strict check: exact swatch probes, ink on the header ring, and a displaced-halo permutation
+  test. That check, not the triangle alone, is what rejects busy backgrounds.
+* **Orientation and mirroring.** The white/black swatches on the top halo pick the rotation.
+  The halo is mirror-symmetric, so `locate` only considers orientation-preserving maps and
+  `read` detects a mirrored view from the cyclic order of the calibrated hue centroids.
+* **Homography.** A coarse fit from the anchors is refined with lattice-phase measurements
+  (Fourier phase of the ink image at the three reciprocal lattice vectors, ~150 windows).
+  This is blur- and content-independent, and per-dot centroid refinement (≤ 0.3 p) absorbs
+  lens distortion and the breathing wave.
+* **Lighting.** The paper level is a plane fitted over the particle band and divided out.
+  White balance uses the paper's chroma (the white swatch is only ~4 % brighter than the
+  paper). Hue is classified by chroma angle against per-frame centroids.
+* **Size.** Ink mass in two windows (r = 0.34 p and 0.52 p), normalised by the same-hue
+  swatch and the local pitch², combined by a per-frame Fisher discriminant. The spec's
+  six-neighbour median rule refines borderline dots.
+* **Confidence.** Each dot gets the weakest of its hue margin, size margin and ink depth,
+  on a 0–255 scale. Symbols below `rs::ERASURE_BELOW` (96) become Reed-Solomon erasures.
 
 ## Not implemented in v1
 
