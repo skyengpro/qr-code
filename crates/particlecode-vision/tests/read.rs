@@ -2,9 +2,8 @@
 //!
 //! Every test renders `FrameSpec`s in the exact palette, degrades them like a camera
 //! would, finds them with `locate` and compares header symbols, body symbols and particle
-//! sectors with the ground truth. `Header::decode` needs the codec work package, so these
-//! tests compare *symbols*; the end-to-end `read` test at the bottom is ignored until
-//! `particlecode_core::rs` is implemented.
+//! sectors with the ground truth. Most tests compare *symbols*; the end-to-end tests at the
+//! bottom also go through `Header::decode` and `BodyCodec::decode`.
 #![allow(clippy::print_stderr)] // diagnostics on failure
 
 mod common;
@@ -297,7 +296,6 @@ fn unusable_frames_do_not_panic() {
 
 /// End to end through `Header::decode`; needs `particlecode_core::rs` (header RS code).
 #[test]
-#[ignore = "needs particlecode_core::rs::{header_encode, header_decode} from the codec work package"]
 fn full_read_decodes_the_header_and_picks_the_order() {
     for (profile, ppp) in PROFILES {
         let order = disc_order(profile);
@@ -321,8 +319,7 @@ fn full_read_decodes_the_header_and_picks_the_order() {
         let (h, symbols, liveness) = read(&yuv, &lock, &order_for).expect("read");
         assert_eq!(h, header);
         assert_eq!(symbols.len(), order.len());
-        let want =
-            particlecode_vision::Liveness::from_sectors(Some(sectors), Some(header.packet_seed));
+        let want = particlecode_vision::Liveness::from_sectors(&sectors, header.packet_seed);
         assert_eq!(liveness, want);
     }
 }
@@ -345,11 +342,6 @@ fn non_disc_shapes_read_too() {
 
 /// The whole receive path: encoded body and header -> pixels -> `locate` -> `read` ->
 /// `BodyCodec::decode`, including a glare patch that RS has to repair with erasures.
-///
-/// `BodyCodec` does not exist in the scaffold this crate was written against, so the test is
-/// compiled out. After the codec work package is merged, delete the `cfg(any())` line below
-/// (verified to pass against that package's `body.rs` and `rs.rs`).
-#[cfg(any())]
 #[test]
 fn end_to_end_through_the_real_codecs() {
     use common::Rng;

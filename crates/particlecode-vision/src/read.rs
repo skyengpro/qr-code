@@ -109,7 +109,9 @@ pub fn read<'a>(
 ) -> Result<(Header, Vec<Sym3>, Liveness), VisionError> {
     let raw = read_raw(frame, lock, order_for)?;
     let header = raw.header.ok_or(VisionError::NoLock)?;
-    let liveness = Liveness::from_sectors(raw.liveness_sectors, Some(header.packet_seed));
+    let liveness = raw.liveness_sectors.map_or(Liveness::Unknown, |s| {
+        Liveness::from_sectors(&s, header.packet_seed)
+    });
     Ok((header, raw.body_symbols, liveness))
 }
 
