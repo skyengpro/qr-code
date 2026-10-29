@@ -1,0 +1,7 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+# Written by scripts/build-android.sh.
+particlecode/src/main/jniLibs/

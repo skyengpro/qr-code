@@ -1,0 +1,26 @@
+[package]
+name = "particlecode-jni"
+description = "Android JNI shim for Particle Code: CameraX planes go straight into the decoder, only progress comes back."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+# `cdylib` is `libparticlecode_jni.so` for Android (and for the host JVM test); `rlib` lets
+# the unit tests and `cargo check` link the same code.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+particlecode-ffi.workspace = true
+jni.workspace = true
+
+[dev-dependencies]
+particlecode-core = { workspace = true, features = ["std"] }
+particlecode-render.workspace = true
+particlecode-vision.workspace = true
+
+[lints]
+workspace = true
