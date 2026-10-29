@@ -141,6 +141,23 @@ The spec's pipeline, with these refinements (details in `particlecode-vision`'s 
 * **Confidence.** Each dot gets the weakest of its hue margin, size margin and ink depth,
   on a 0–255 scale. Symbols below `rs::ERASURE_BELOW` (96) become Reed-Solomon erasures.
 
+## Native bindings
+
+* `particlecode-ffi` is the one binary surface: flutter_rust_bridge-style `api`, the C ABI
+  (`include/particlecode.h`), and `native` (borrowed-buffer entry points for Rust hosts).
+* iOS/macOS: `scripts/build-xcframework.sh` packages the C ABI as
+  `ParticleCodeFFI.xcframework`; `apple/ParticleCodeKit` wraps it in Swift (NV12
+  `CVPixelBuffer`s read in place, an `AVCaptureVideoDataOutput` delegate).
+* Android: `particlecode-jni` exports JNI functions for `com.vaam.particlecode.NativeBridge`
+  over the same decoder. Direct `ByteBuffer`s from CameraX are read in place, handles are
+  table keys (not pointers), and results go into preallocated arrays. `android/` holds the
+  Kotlin wrapper and CameraX analyzer.
+* `raptorq`'s `std` feature (runtime SIMD dispatch) does not compile for 32-bit ARM on
+  stable. Core therefore requests it through a target-specific dependency on every target
+  except `target_arch = "arm"` and `target_os = "none"`, rather than through core's own
+  `std` feature. Consequence: a host-target `--no-default-features` build still compiles
+  raptorq with `std`. The real `no_std` guarantee is the bare-metal `thumbv7em` CI build.
+
 ## Not implemented in v1
 
 * 8-hue palette (header bit reserved; encoder and receiver reject it).

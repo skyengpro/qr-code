@@ -83,6 +83,9 @@ crates/particlecode-render   FrameSpec -> pixels (tiny-skia): PNG, animated GIF,
 crates/particlecode-shapes   shape tool: SVG path -> lattice bitmaps, rule checks, synthetic validation, shapes.bin
 crates/particlecode-cli      the `particlecode` command
 crates/particlecode-ffi      flutter_rust_bridge-style API and a C ABI for the Flutter and Tauri apps
+crates/particlecode-jni      Android JNI shim over the decoder (CameraX buffers read in place)
+android/                     Kotlin wrapper + CameraX analyzer (library module); scripts/build-android.sh
+apple/                       ParticleCodeKit Swift package + podspec over ParticleCodeFFI.xcframework; scripts/build-xcframework.sh
 examples/                    runnable examples and sample CBOR payloads
 fuzz/                        cargo-fuzz target for the header decoder
 ```
