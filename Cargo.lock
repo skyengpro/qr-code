@@ -506,11 +506,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "gif",
  "particlecode-core",
  "particlecode-render",
  "particlecode-vision",
  "png",
  "serde_json",
+ "tiny-skia",
 ]
 
 [[package]]

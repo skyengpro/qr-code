@@ -8,6 +8,10 @@ publish.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[lib]
+name = "particlecode_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "particlecode"
 path = "src/main.rs"
@@ -20,6 +24,35 @@ clap.workspace = true
 anyhow.workspace = true
 png.workspace = true
 serde_json.workspace = true
+tiny-skia.workspace = true
+
+[dev-dependencies]
+gif.workspace = true
+
+# Runnable examples live in the top-level `examples/` folder (see examples/README.md).
+[[example]]
+name = "encode_png"
+path = "../../examples/encode_png.rs"
+
+[[example]]
+name = "animated_gif"
+path = "../../examples/animated_gif.rs"
+
+[[example]]
+name = "shapes_gallery"
+path = "../../examples/shapes_gallery.rs"
+
+[[example]]
+name = "symbol_roundtrip"
+path = "../../examples/symbol_roundtrip.rs"
+
+[[example]]
+name = "print_poster"
+path = "../../examples/print_poster.rs"
+
+[[example]]
+name = "readme_images"
+path = "../../examples/readme_images.rs"
 
 [lints]
 workspace = true
