@@ -1,14 +1,16 @@
 //! The receiver: symbols in, progress and payload out.
 
-use particlecode_core::{Receiver, Sym3};
+use particlecode_core::{DecodeError, Progress, Receiver, Sym3};
+use particlecode_vision::{PlaneRef, VisionError, YuvFrame, YuvRef, locate, read, sharpness};
 
-use super::dto::ProgressDto;
+use super::dto::{FrameResultDto, ImagePointDto, LivenessDto, ProgressDto};
 
 /// A decoder session. Opaque to the host language; feed it frames until
 /// [`ProgressDto::Done`], or until the UI gives up and drops it.
 ///
-/// Phase 1 takes symbols that the host already classified. Phase 2 adds `feed_yuv`, which
-/// takes camera planes (see the marked spot below).
+/// Feed it either camera images ([`feed_yuv`](Self::feed_yuv),
+/// [`feed_rgba`](Self::feed_rgba)) or symbols that the host already classified
+/// ([`feed_symbols`](Self::feed_symbols)). All of them drive the same receiver.
 #[derive(Debug)]
 pub struct ParticleDecoder {
     rx: Receiver,
@@ -55,23 +57,162 @@ impl ParticleDecoder {
         self.rx.feed(&syms).into()
     }
 
-    // PHASE 2 (vision): `feed_yuv` plugs in here.
-    //
-    //     pub fn feed_yuv(
-    //         &mut self,
-    //         width: u32, height: u32,
-    //         y: &[u8], u: &[u8], v: &[u8],
-    //         y_stride: u32, uv_stride: u32, uv_pixel_stride: u32,
-    //     ) -> FrameResultDto
-    //
-    // It builds the vision crate's YUV frame view from the planes, calls
-    // `particlecode_vision::locate` (anchors + homography) and then `read`
-    // (header, symbols with confidences, liveness), feeds header and body to
-    // `self.rx.feed_decoded(&header, &body)` (or `self.rx.feed(..)` with the header symbols
-    // included), and returns the resulting `ProgressDto` together with the lock state and
-    // liveness so the UI can show "searching / locked / reading". Keep the ProgressDto
-    // contract of `feed_symbols`: a frame that cannot be located or read is a rejection,
-    // never an error or a panic.
+    /// Feed one camera frame in YUV 4:2:0 (Android `YUV_420_888`, iOS NV12/NV21, I420).
+    ///
+    /// * `y` is the luma plane: `height` rows of `width` bytes, `y_stride` bytes apart.
+    /// * `u` and `v` are the Cb and Cr planes at half resolution (`ceil(width / 2)` x
+    ///   `ceil(height / 2)` samples). Chroma sample `(col, row)` is the byte
+    ///   `row * uv_stride + col * uv_pixel_stride` of its buffer, so planar I420 uses
+    ///   `uv_pixel_stride = 1` and interleaved chroma uses `2`. For NV21 (Android) pass the
+    ///   `V` and `U` buffers as the camera plugin gives them (they alias one interleaved
+    ///   buffer); for NV12 pass the interleaved plane as `u` and the same plane from byte 1
+    ///   as `v`.
+    ///
+    /// Locates the code, reads the frame, and feeds it to the receiver. A frame that
+    /// cannot be located or read (including inconsistent buffers) is a rejection described
+    /// in the result, never an error.
+    ///
+    /// The generated bindings copy the byte vectors once; call this on a worker isolate.
+    #[allow(clippy::too_many_arguments)] // flat on purpose: the bridge cannot take a struct of borrows
+    pub fn feed_yuv(
+        &mut self,
+        width: u32,
+        height: u32,
+        y: Vec<u8>,
+        u: Vec<u8>,
+        v: Vec<u8>,
+        y_stride: u32,
+        uv_stride: u32,
+        uv_pixel_stride: u32,
+    ) -> FrameResultDto {
+        self.feed_yuv_slices(
+            width,
+            height,
+            (&y, &u, &v),
+            (y_stride, uv_stride, uv_pixel_stride),
+        )
+    }
+
+    /// Feed one RGBA8 camera frame (`4 * width * height` tightly packed bytes), for desktop
+    /// and webcam capture. Alpha is ignored. See [`feed_yuv`](Self::feed_yuv) for the
+    /// result.
+    pub fn feed_rgba(&mut self, width: u32, height: u32, rgba: Vec<u8>) -> FrameResultDto {
+        self.try_feed_rgba(width, height, &rgba)
+            .unwrap_or_else(FrameResultDto::bad_buffers)
+    }
+
+    /// [`feed_yuv`](Self::feed_yuv) over borrowed buffers; `strides` is
+    /// `(y_stride, uv_stride, uv_pixel_stride)`. Not bridged: it is what the C ABI calls,
+    /// so camera memory is never copied except for de-interleaving chroma.
+    ///
+    /// `None` if the buffers are inconsistent with the dimensions and strides.
+    pub(crate) fn try_feed_yuv(
+        &mut self,
+        width: u32,
+        height: u32,
+        planes: (&[u8], &[u8], &[u8]),
+        strides: (u32, u32, u32),
+    ) -> Option<FrameResultDto> {
+        let (mut scratch_u, mut scratch_v) = (Vec::new(), Vec::new());
+        let planes = YuvPlanes {
+            width: width as usize,
+            height: height as usize,
+            y: planes.0,
+            u: planes.1,
+            v: planes.2,
+            y_stride: strides.0 as usize,
+            uv_stride: strides.1 as usize,
+            uv_pixel_stride: strides.2 as usize,
+        };
+        let yuv = planes.view(&mut scratch_u, &mut scratch_v)?;
+        Some(self.process(&yuv))
+    }
+
+    /// [`try_feed_yuv`](Self::try_feed_yuv) with unusable buffers reported as a rejection.
+    pub(crate) fn feed_yuv_slices(
+        &mut self,
+        width: u32,
+        height: u32,
+        planes: (&[u8], &[u8], &[u8]),
+        strides: (u32, u32, u32),
+    ) -> FrameResultDto {
+        self.try_feed_yuv(width, height, planes, strides)
+            .unwrap_or_else(FrameResultDto::bad_buffers)
+    }
+
+    /// [`feed_rgba`](Self::feed_rgba) over a borrowed buffer. `None` if `rgba` is shorter
+    /// than `4 * width * height` or the size is zero.
+    pub(crate) fn try_feed_rgba(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Option<FrameResultDto> {
+        let (w, h) = (width as usize, height as usize);
+        let n = w.checked_mul(h).filter(|&n| n > 0 && n <= rgba.len() / 4)?;
+        let rgb: Vec<u8> = rgba[..4 * n]
+            .chunks_exact(4)
+            .flat_map(|p| [p[0], p[1], p[2]])
+            .collect();
+        let yuv = YuvFrame::from_rgb(w, h, &rgb);
+        Some(self.process(&YuvRef::from(&yuv)))
+    }
+
+    /// The shared camera pipeline: locate, read, feed.
+    fn process(&mut self, yuv: &YuvRef<'_>) -> FrameResultDto {
+        let Some(lock) = locate(yuv.luma()) else {
+            return FrameResultDto::rejected(VisionError::NoLock, "no code in view");
+        };
+        let sharp = sharpness(yuv.luma(), &lock);
+        let mut anchors: Vec<ImagePointDto> = lock
+            .anchors_px
+            .iter()
+            .map(|&(x, y)| ImagePointDto { x, y })
+            .collect();
+        anchors.extend(lock.center_px.map(|(x, y)| ImagePointDto { x, y }));
+        let locked = FrameResultDto {
+            locked: true,
+            anchors,
+            sharpness: sharp,
+            ..FrameResultDto::rejected(VisionError::NoLock, "")
+        };
+
+        let read_result = read(*yuv, &lock, &|p, s| self.rx.dot_order(p, s));
+        let (header, body, liveness) = match read_result {
+            Ok(r) => r,
+            Err(e) => {
+                return FrameResultDto {
+                    progress: ProgressDto::Rejected {
+                        reason: e.to_string(),
+                    },
+                    reject_reason: Some(e.to_string()),
+                    hint: Some(vision_hint(&e).into()),
+                    ..locked
+                };
+            }
+        };
+        let progress = self.rx.feed_decoded(&header, &body);
+        let (reject_reason, hint) = match &progress {
+            Progress::Rejected(e) => (
+                Some(e.to_string()),
+                matches!(
+                    e,
+                    DecodeError::ShapeTableMismatch(_) | DecodeError::UnknownShape(_)
+                )
+                .then(|| UPDATE_HINT.to_owned()),
+            ),
+            _ => (None, None),
+        };
+        FrameResultDto {
+            profile: Some(header.profile.into()),
+            shape_id: Some(header.shape_id),
+            liveness: liveness.into(),
+            progress: progress.into(),
+            reject_reason,
+            hint,
+            ..locked
+        }
+    }
 
     /// Payload bytes newly delivered in order since the last call (segment by segment, so
     /// large payloads can be consumed while the transfer is still running). After
@@ -85,6 +226,105 @@ impl ParticleDecoder {
         self.rx.session_id()
     }
 }
+
+const UPDATE_HINT: &str = "This code needs a newer version of the app";
+
+/// User-facing advice for a vision failure.
+fn vision_hint(e: &VisionError) -> &'static str {
+    match e {
+        VisionError::NoLock => "Point the camera at the code",
+        VisionError::Truncated => "Move back: the whole code must be in view",
+        VisionError::Residual | VisionError::ProfileMismatch | VisionError::Header(_) => {
+            "Hold the phone steady, facing the code"
+        }
+        VisionError::Lighting => "Too dark or too much glare: change the angle or the light",
+        VisionError::UnknownShape(_) => UPDATE_HINT,
+    }
+}
+
+impl FrameResultDto {
+    /// A frame whose buffers do not match the stated dimensions and strides.
+    fn bad_buffers() -> FrameResultDto {
+        FrameResultDto::rejected(VisionError::NoLock, "inconsistent image buffers")
+    }
+
+    /// A frame that was not locked: nothing found, or unusable buffers.
+    fn rejected(e: VisionError, detail: &str) -> FrameResultDto {
+        let reason = if detail.is_empty() {
+            e.to_string()
+        } else {
+            format!("{e} ({detail})")
+        };
+        FrameResultDto {
+            locked: false,
+            profile: None,
+            shape_id: None,
+            anchors: Vec::new(),
+            sharpness: 0.0,
+            liveness: LivenessDto::Unknown,
+            progress: ProgressDto::Rejected {
+                reason: reason.clone(),
+            },
+            reject_reason: Some(reason),
+            hint: Some(vision_hint(&e).into()),
+        }
+    }
+}
+
+/// Borrowed camera planes, before validation.
+struct YuvPlanes<'a> {
+    width: usize,
+    height: usize,
+    y: &'a [u8],
+    u: &'a [u8],
+    v: &'a [u8],
+    y_stride: usize,
+    uv_stride: usize,
+    uv_pixel_stride: usize,
+}
+
+impl<'a> YuvPlanes<'a> {
+    /// A validated view. Luma and planar chroma are borrowed as they are; interleaved
+    /// chroma is de-interleaved into the scratch buffers (a quarter of the luma size).
+    fn view(&self, scratch_u: &'a mut Vec<u8>, scratch_v: &'a mut Vec<u8>) -> Option<YuvRef<'a>> {
+        let luma = PlaneRef::new(self.width, self.height, self.y_stride, self.y)?;
+        let (cw, ch) = (self.width.div_ceil(2), self.height.div_ceil(2));
+        let u = self.chroma(self.u, cw, ch, scratch_u)?;
+        let v = self.chroma(self.v, cw, ch, scratch_v)?;
+        YuvRef::new(luma, u, v)
+    }
+
+    fn chroma(
+        &self,
+        data: &'a [u8],
+        cw: usize,
+        ch: usize,
+        scratch: &'a mut Vec<u8>,
+    ) -> Option<PlaneRef<'a>> {
+        let step = self.uv_pixel_stride;
+        if step == 1 {
+            return PlaneRef::new(cw, ch, self.uv_stride, data);
+        }
+        // Row r holds samples at r * stride + c * step; the last one must exist.
+        let last = (ch.checked_sub(1)?)
+            .checked_mul(self.uv_stride)?
+            .checked_add((cw.checked_sub(1)?).checked_mul(step)?)?;
+        if step == 0 || last >= data.len() {
+            return None;
+        }
+        scratch.clear();
+        scratch.reserve(cw * ch);
+        for row in 0..ch {
+            let base = row * self.uv_stride;
+            scratch.extend((0..cw).map(|c| data[base + c * step]));
+        }
+        let packed: &'a [u8] = scratch;
+        PlaneRef::new(cw, ch, cw, packed)
+    }
+}
+
+#[cfg(test)]
+mod camera_tests;
 
 #[cfg(test)]
 mod tests {

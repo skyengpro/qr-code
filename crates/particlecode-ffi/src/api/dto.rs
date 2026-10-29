@@ -522,6 +522,82 @@ impl ProgressDto {
     }
 }
 
+// ---------------------------------------------------------------------------------------
+// Camera frames
+// ---------------------------------------------------------------------------------------
+
+/// A point in camera-image pixels (origin top-left, `y` down).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct ImagePointDto {
+    /// Horizontal, rightwards.
+    pub x: f64,
+    /// Vertical, downwards.
+    pub y: f64,
+}
+
+/// The particle liveness read from a camera frame. Mirrors the vision crate's `Liveness`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum LivenessDto {
+    /// The particles could not be read.
+    Unknown,
+    /// The particles were read.
+    Read {
+        /// Low byte of the packet seed, as shown by the particles.
+        seed_low: u8,
+        /// The 16-bit rolling HMAC value, as shown by the particles; check it with
+        /// `liveness_verify`.
+        rolling: u16,
+        /// Whether `seed_low` matches the decoded header's packet seed.
+        consistent: bool,
+    },
+}
+
+impl From<particlecode_vision::Liveness> for LivenessDto {
+    fn from(l: particlecode_vision::Liveness) -> Self {
+        match l {
+            particlecode_vision::Liveness::Unknown => LivenessDto::Unknown,
+            particlecode_vision::Liveness::Read {
+                seed_low,
+                rolling,
+                consistent,
+            } => LivenessDto::Read {
+                seed_low,
+                rolling,
+                consistent,
+            },
+        }
+    }
+}
+
+/// What happened to one camera frame (`feed_yuv`, `feed_rgba`).
+///
+/// A frame that cannot be located or read is a normal outcome: `progress` is then
+/// `Rejected`, `reject_reason` says why and `hint` (if any) is text for the user.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FrameResultDto {
+    /// Whether the three anchors were found (the overlay may be drawn).
+    pub locked: bool,
+    /// Profile, once the frame's header was read.
+    pub profile: Option<ProfileDto>,
+    /// Shape id, once the frame's header was read.
+    pub shape_id: Option<u8>,
+    /// Anchor positions in image pixels for a UI overlay: top, lower right, lower left,
+    /// then the center mark if it was found. Empty when not locked.
+    pub anchors: Vec<ImagePointDto>,
+    /// Sharpness score (higher is sharper; 0 when not locked). Comparable between frames of
+    /// the same code at a similar scale: keep the sharpest of the captures of each data
+    /// frame.
+    pub sharpness: f64,
+    /// Particle liveness, `Unknown` unless the frame was read.
+    pub liveness: LivenessDto,
+    /// What the receiver did with the frame.
+    pub progress: ProgressDto,
+    /// Technical reason when the frame was rejected, else `None`.
+    pub reject_reason: Option<String>,
+    /// Short user-facing advice ("too dark or glare", "move back"), else `None`.
+    pub hint: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

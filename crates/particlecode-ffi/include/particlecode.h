@@ -50,6 +50,20 @@ typedef struct PcProgress {
     uint32_t segments_total; /* segments in the transfer */
 } PcProgress;
 
+/* What a camera frame showed (pc_decoder_feed_yuv / pc_decoder_feed_rgba). */
+typedef struct PcFrameResult {
+    int32_t locked;              /* 1 if the three anchors were found */
+    int32_t profile;             /* 0 S, 1 M, 2 L; -1 header not read */
+    int32_t shape_id;            /* -1 header not read */
+    int32_t liveness_read;       /* 1 if the particles were read */
+    int32_t liveness_consistent; /* 1 if the particles' seed byte matches the header */
+    uint32_t liveness_seed_low;  /* valid when liveness_read */
+    uint32_t liveness_rolling;   /* valid when liveness_read; check with pc_liveness_verify */
+    uint32_t anchor_count;       /* valid anchor points: 0, 3 or 4 */
+    double anchors[8];           /* image px, x/y pairs: top, lower right, lower left, center */
+    double sharpness;            /* higher is sharper; 0 if not locked */
+} PcFrameResult;
+
 /* ---- library ---------------------------------------------------------------------- */
 
 uint32_t pc_abi_version(void);
@@ -118,10 +132,41 @@ void pc_decoder_free(PcDecoder *dec);
 int32_t pc_decoder_feed_symbols(PcDecoder *dec, const uint8_t *symbols,
                                 const uint8_t *confidences, size_t len);
 
+/*
+ * Feed one camera frame in YUV 4:2:0 (Android YUV_420_888, iOS NV12/NV21, I420).
+ *
+ * `y` is `height` rows of `width` bytes, `y_stride` bytes apart. `u` and `v` are the Cb and
+ * Cr buffers at half resolution (ceil(width/2) x ceil(height/2) samples); sample (col, row)
+ * is the byte row * uv_stride + col * uv_pixel_stride, so planar I420 has uv_pixel_stride 1
+ * and interleaved chroma 2 (NV21: `v` is the interleaved buffer, `u` the same buffer from
+ * byte 1; NV12 the other way round). Each *_len is the size of its buffer in bytes.
+ *
+ * Returns PC_REJECTED (no code found, unreadable, ...; see pc_decoder_reject_reason and
+ * pc_decoder_hint), PC_ACCEPTED, PC_DONE, or a negative error: PC_ERR_NULL for a NULL
+ * handle or plane, PC_ERR_INVALID if a size is zero or a buffer is too short for the
+ * stated dimensions and strides. `out` may be NULL; otherwise it is filled for every
+ * non-negative result.
+ */
+int32_t pc_decoder_feed_yuv(PcDecoder *dec, uint32_t width, uint32_t height,
+                            const uint8_t *y, size_t y_len, const uint8_t *u, size_t u_len,
+                            const uint8_t *v, size_t v_len, uint32_t y_stride,
+                            uint32_t uv_stride, uint32_t uv_pixel_stride,
+                            PcFrameResult *out);
+
+/*
+ * Feed one RGBA8 camera frame (rgba_len >= 4 * width * height, tightly packed, alpha
+ * ignored), for desktop and webcam capture. Results as for pc_decoder_feed_yuv.
+ */
+int32_t pc_decoder_feed_rgba(PcDecoder *dec, uint32_t width, uint32_t height,
+                             const uint8_t *rgba, size_t rgba_len, PcFrameResult *out);
+
+/* User-facing advice after the last camera frame; NULL if none. Release with pc_string_free. */
+char *pc_decoder_hint(const PcDecoder *dec);
+
 /* Progress after the last feed. Returns 0 or PC_ERR_NULL. */
 int32_t pc_decoder_progress(const PcDecoder *dec, PcProgress *out);
 
-/* Why the last feed returned PC_REJECTED; NULL if it did not. Release with pc_string_free. */
+/* Why the last feed (symbols or camera) returned PC_REJECTED; NULL if it did not. Release with pc_string_free. */
 char *pc_decoder_reject_reason(const PcDecoder *dec);
 
 /*
