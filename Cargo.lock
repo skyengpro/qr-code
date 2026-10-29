@@ -571,6 +571,7 @@ name = "particlecode-vision"
 version = "0.1.0"
 dependencies = [
  "particlecode-core",
+ "particlecode-render",
  "proptest",
  "thiserror",
 ]

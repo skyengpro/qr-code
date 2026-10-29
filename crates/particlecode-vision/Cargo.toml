@@ -13,6 +13,7 @@ particlecode-core = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+particlecode-render.workspace = true
 proptest.workspace = true
 
 [lints]
