@@ -68,5 +68,8 @@ Pod::Spec.new do |s|
   # found"), delete this line: the keeper still holds.
   s.user_target_xcconfig = {
     'OTHER_LDFLAGS' => '$(inherited) -force_load "${PODS_XCFRAMEWORKS_BUILD_DIR}/particle_code/libparticlecode_ffi.a"',
+    # dart:ffi finds the pc_* functions with dlsym (DynamicLibrary.process()), so release
+    # builds must keep global symbols: strip only local ones.
+    'STRIP_STYLE' => 'non-global',
   }
 end
