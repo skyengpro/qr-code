@@ -17,9 +17,9 @@ Camera frames never cross into Dart. Only small progress events cross, plus the 
   `android/particlecode/src/main/jniLibs`. It exports the JNI functions (scanner) **and** all
   `pc_*` C functions (sender), so Dart opens it with `DynamicLibrary.open('libparticlecode_jni.so')`.
 * **iOS:** `ParticleCodeFFI.xcframework` (static, `scripts/build-xcframework.sh`) linked into the
-  app. Dart uses `DynamicLibrary.process()`. The podspec must force-load the archive (or otherwise
-  keep every `pc_*` symbol), because the encoder functions are only referenced from Dart and the
-  linker would dead-strip them.
+  app. Dart uses `DynamicLibrary.process()`. The plugin must keep every `pc_*` symbol (its Swift
+  `SymbolKeeper` references them all, and the podspec sets Strip Style to non-global), because
+  the encoder functions are only referenced from Dart and the linker would drop them.
 * **Host (tests, desktop):** `DynamicLibrary.open` of `$PARTICLECODE_LIB` if set, else the
   workspace `target/{debug,release}/libparticlecode_ffi.{so,dylib}`.
 

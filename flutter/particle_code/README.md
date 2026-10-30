@@ -162,8 +162,8 @@ scripts/build-xcframework.sh      # ParticleCodeFFI.xcframework for iOS (needs X
 
 * Android: Dart opens `libparticlecode_jni.so`, which exports both the JNI scanner and the
   `pc_*` encoder C functions.
-* iOS: the xcframework is statically linked and force-loaded; Dart uses
-  `DynamicLibrary.process()`.
+* iOS: the xcframework is statically linked and its `pc_*` symbols are kept alive by the
+  plugin's `SymbolKeeper`; Dart uses `DynamicLibrary.process()`.
 * Desktop and tests: `$PARTICLECODE_LIB`, else the newest
   `target/{debug,release}/libparticlecode_ffi.{so,dylib}` found by searching upward from the
   working directory. Run `cargo build -p particlecode-ffi` first.

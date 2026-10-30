@@ -27,8 +27,8 @@ Pod::Spec.new do |s|
   s.dependency 'Flutter'
 
   # Everything ends up in the Runner executable, even when the app uses `use_frameworks!`.
-  # dart:ffi looks the encoder functions up with DynamicLibrary.process(), and the
-  # force_load below must apply to the same link step that contains the Swift code.
+  # dart:ffi looks the encoder functions up with DynamicLibrary.process(), so they must be
+  # linked into the executable itself, next to the Swift code that keeps them.
   s.static_framework = true
 
   # The plugin itself plus ParticleCodeKit's sources. Pod sources must live inside the pod
@@ -53,22 +53,14 @@ Pod::Spec.new do |s|
     'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386',
   }
 
-  # Keep the pc_* C functions that only Dart calls.
-  #
-  # CocoaPods (1.11+) copies the matching slice of a vendored static xcframework to
-  # ${PODS_XCFRAMEWORKS_BUILD_DIR}/<pod name>/ (libparticlecode_ffi.a and Headers/) during
-  # the build and links it with -lparticlecode_ffi, which only loads archive members that
-  # something references. -force_load loads all of them, so the encoder is in the app.
-  # ${PODS_XCFRAMEWORKS_BUILD_DIR} is defined in the Pods-Runner xcconfig, which Runner
-  # includes, so the variable also expands in the user target. Because that directory is
-  # per-SDK, one setting covers device and simulator.
-  #
-  # -force_load alone does not survive -dead_strip in release builds; the real guarantee is
-  # Classes/SymbolKeeper.swift, which references every pc_* function from live code. If
-  # the force_load path ever breaks (a CocoaPods layout change fails the link with "file not
-  # found"), delete this line: the keeper still holds.
+  # Keep the pc_* C functions that only Dart calls. CocoaPods links the vendored static
+  # xcframework lazily (only archive members something references are loaded), and release
+  # builds dead-strip. Classes/SymbolKeeper.swift references every pc_* function from live
+  # code, which keeps them through both; tool/check-symbols.sh keeps it in step with the
+  # header, and CI checks the built app's symbol table. (A -force_load of the archive is not
+  # used: CocoaPods does not expose the copied slice as a declared build input, so Xcode
+  # rejects the path, and the keeper makes it unnecessary.)
   s.user_target_xcconfig = {
-    'OTHER_LDFLAGS' => '$(inherited) -force_load "${PODS_XCFRAMEWORKS_BUILD_DIR}/particle_code/libparticlecode_ffi.a"',
     # dart:ffi finds the pc_* functions with dlsym (DynamicLibrary.process()), so release
     # builds must keep global symbols: strip only local ones.
     'STRIP_STYLE' => 'non-global',
