@@ -5,7 +5,7 @@
 #
 # macOS only: it needs Xcode (lipo, xcodebuild, strip, ditto) and the Rust Apple targets.
 #
-#   scripts/build-xcframework.sh [--macos] [--no-zip] [--debug-info]
+#   scripts/build-xcframework.sh [--macos] [--no-zip] [--debug-info] [--flutter]
 #
 # Output:
 #   target/apple/ParticleCodeFFI.xcframework          the framework
@@ -13,6 +13,9 @@
 #   apple/ParticleCodeKit/Frameworks/...xcframework   copy the Swift package and podspec use
 #                                                     (SwiftPM requires binary targets inside
 #                                                     the package; the copy is git-ignored)
+#   flutter/particle_code/ios/Frameworks/...          with --flutter: copy for the Flutter plugin's
+#                                                     podspec (ignored by git; pods cannot reach
+#                                                     outside their own directory)
 #
 # Environment:
 #   IPHONEOS_DEPLOYMENT_TARGET   iOS minimum (default 13.0)
@@ -27,11 +30,13 @@ usage() {
 WITH_MACOS=0
 WITH_ZIP=1
 KEEP_DEBUG=0
+WITH_FLUTTER=0
 for arg in "$@"; do
     case "$arg" in
         --macos) WITH_MACOS=1 ;;
         --no-zip) WITH_ZIP=0 ;;
         --debug-info) KEEP_DEBUG=1 ;;
+        --flutter) WITH_FLUTTER=1 ;;
         -h | --help) usage; exit 0 ;;
         *) echo "error: unknown argument '$arg'" >&2; usage >&2; exit 2 ;;
     esac
@@ -164,6 +169,15 @@ PKG_COPY="$ROOT/apple/ParticleCodeKit/Frameworks/ParticleCodeFFI.xcframework"
 rm -rf "$PKG_COPY"
 mkdir -p "$(dirname "$PKG_COPY")"
 cp -R "$XCF" "$PKG_COPY"
+
+# The Flutter plugin's podspec vendors its own copy for the same reason.
+if [ "$WITH_FLUTTER" -eq 1 ]; then
+    FLUTTER_COPY="$ROOT/flutter/particle_code/ios/Frameworks/ParticleCodeFFI.xcframework"
+    rm -rf "$FLUTTER_COPY"
+    mkdir -p "$(dirname "$FLUTTER_COPY")"
+    cp -R "$XCF" "$FLUTTER_COPY"
+    echo "==> copied to flutter/particle_code/ios/Frameworks/"
+fi
 
 # ---- 5. zip + checksum ----------------------------------------------------------------------
 if [ "$WITH_ZIP" -eq 1 ]; then

@@ -10,6 +10,26 @@ public enum ScannerSetupError: Error, Equatable, Sendable {
     case cannotAddInputOrOutput
 }
 
+/// One processed camera frame as `ParticleCaptureScanner.init(resultQueue:onUpdate:)` reports
+/// it: the `ScanResult` plus what a streaming consumer (the Flutter plugin) needs on top.
+public struct ScanUpdate: Sendable {
+    /// What the decoder did with the frame.
+    public var result: ScanResult
+    /// Payload bytes verified, in order, since the previous update; `nil` if there are none.
+    /// On the update that carries `.done` this includes the last chunk, so concatenating
+    /// all `newBytes` of one transfer gives the complete payload.
+    public var newBytes: Data?
+    /// The session id being received; set only on the update that carries `.done`.
+    public var sessionId: UInt16?
+    /// Size of the pixel buffer the anchors in `result` refer to, in pixels. This is the
+    /// sensor's native orientation: the scanner never rotates the data output.
+    public var imageWidth: Int
+    public var imageHeight: Int
+    /// Number of `reset()` calls that happened before this frame was decoded. A consumer
+    /// that resets can drop updates of an older generation still in flight to `resultQueue`.
+    public var generation: Int
+}
+
 /// Glue between an `AVCaptureSession` and a `ParticleDecoder`.
 ///
 /// The scanner is the delegate of an `AVCaptureVideoDataOutput` and owns one
@@ -44,23 +64,46 @@ public final class ParticleCaptureScanner: NSObject, AVCaptureVideoDataOutputSam
     public let queue: DispatchQueue
 
     private let resultQueue: DispatchQueue
-    private let onResult: (ScanResult) -> Void
-    // Both touched only on `queue`.
+    private let onUpdate: (ScanUpdate) -> Void
+    private let streamsPayload: Bool
+    // All touched only on `queue`.
     private var decoder: ParticleDecoder
     private var finished = false
+    private var delivered = 0  // bytes of `decoder.payload` already reported in a ScanUpdate
+    private var generation = 0
 
     /// - Parameters:
     ///   - resultQueue: Where `onResult` is called; the main queue by default.
     ///   - onResult: Called once per processed frame (up to the camera rate). Keep it cheap.
     /// - Returns: `nil` if the Rust decoder could not be created (see `ParticleDecoder.init`).
-    public init?(
+    public convenience init?(
         resultQueue: DispatchQueue = .main,
         onResult: @escaping (ScanResult) -> Void
+    ) {
+        self.init(
+            resultQueue: resultQueue, streamsPayload: false, onUpdate: { onResult($0.result) })
+    }
+
+    /// Like `init(resultQueue:onResult:)`, but each frame also reports the payload bytes
+    /// verified so far (`ScanUpdate.newBytes`), the session id at `.done`, the pixel buffer
+    /// size and the reset generation. Used by the Flutter plugin to stream the payload.
+    public convenience init?(
+        resultQueue: DispatchQueue,
+        onUpdate: @escaping (ScanUpdate) -> Void
+    ) {
+        self.init(resultQueue: resultQueue, streamsPayload: true, onUpdate: onUpdate)
+    }
+
+    private init?(
+        resultQueue: DispatchQueue,
+        streamsPayload: Bool,
+        onUpdate: @escaping (ScanUpdate) -> Void
     ) {
         guard let decoder = ParticleDecoder() else { return nil }
         self.decoder = decoder
         self.resultQueue = resultQueue
-        self.onResult = onResult
+        self.streamsPayload = streamsPayload
+        self.onUpdate = onUpdate
         self.queue = DispatchQueue(label: "com.particlecode.scanner", qos: .userInitiated)
         super.init()
     }
@@ -72,6 +115,8 @@ public final class ParticleCaptureScanner: NSObject, AVCaptureVideoDataOutputSam
                 decoder = fresh
             }
             finished = false
+            delivered = 0
+            generation += 1
         }
     }
 
@@ -93,11 +138,35 @@ public final class ParticleCaptureScanner: NSObject, AVCaptureVideoDataOutputSam
             return
         }
         let result = decoder.feed(pixelBuffer: pixelBuffer)
+        var isDone = false
         if case .done = result.progress {
             finished = true
+            isDone = true
         }
-        let deliver = onResult
-        resultQueue.async { deliver(result) }
+
+        var newBytes: Data?
+        var sessionId: UInt16?
+        if streamsPayload {
+            if isDone {
+                // `feed` drained the last chunk into `payload` already.
+                let payload = decoder.payload
+                if payload.count > delivered {
+                    newBytes = payload.subdata(in: delivered..<payload.count)
+                }
+                delivered = payload.count
+                sessionId = decoder.sessionId
+            } else if let chunk = decoder.takeReady() {
+                newBytes = chunk
+                delivered = decoder.payload.count
+            }
+        }
+
+        let update = ScanUpdate(
+            result: result, newBytes: newBytes, sessionId: sessionId,
+            imageWidth: CVPixelBufferGetWidth(pixelBuffer),
+            imageHeight: CVPixelBufferGetHeight(pixelBuffer), generation: generation)
+        let deliver = onUpdate
+        resultQueue.async { deliver(update) }
     }
 
     // MARK: Capture configuration
