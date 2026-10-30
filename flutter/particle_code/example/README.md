@@ -31,6 +31,10 @@ The iOS deployment target is 15.0, the lowest Flutter 3.47 accepts (it rewrites 
 lower), and the plugin's minimum too. The Release configuration sets
 `STRIP_STYLE = non-global` so the `pc_*` functions that only Dart calls survive stripping.
 
+On iOS the app builds through Swift Package Manager (Flutter's default); it has no Podfile. With
+SwiftPM disabled (`flutter config --no-enable-swift-package-manager`) Flutter generates a standard
+Podfile on the next build and uses the plugin's podspec instead (git-ignored).
+
 ## Tests
 
 ```sh
