@@ -135,8 +135,10 @@ jobs:
           echo "$perms"
           grep -q "android.permission.CAMERA" <<< "$perms"
           badging=$("$aapt2" dump badging "$apk")
-          grep -q "sdkVersion:'24'" <<< "$badging" \
-            || { echo "minSdk is not 24"; grep sdkVersion <<< "$badging"; exit 1; }
+          # Older aapt2 prints sdkVersion:'24', newer minSdkVersion:'24'.
+          grep -i "sdkversion" <<< "$badging" || true
+          grep -qiE "(^|[^a-z])(min)?sdkversion:'24'" <<< "$badging" \
+            || { echo "minSdk is not 24"; exit 1; }
 
       # Convenience download, not a check: a full artifact quota must not fail the job.
       - uses: actions/upload-artifact@v4
