@@ -26,6 +26,7 @@ export 'src/frame_spec.dart'
         CodeDims,
         CodeProfile,
         FrameDot,
+        FrameDots,
         FrameHeader,
         FrameSpec,
         ParticleBand,

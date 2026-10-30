@@ -60,11 +60,34 @@ Painting is `ParticleCodePainter`, a plain `CustomPainter` you can use yourself 
 example to render into an image). Colors come from `ParticleCodePalette` and must not be
 altered or color-managed: the receiver's classifier depends on them.
 
-Building a frame (Reed-Solomon coding in Rust, then JSON decoding in Dart) runs
-synchronously on the calling isolate, once per data-frame interval. With the release
-native library that is a few milliseconds; an unoptimized `cargo build` library (the one the
-host tests use) is roughly 10 to 35 ms per frame at profile S to L, so measure on device with
-the release build that `scripts/build-android.sh` and `scripts/build-xcframework.sh` produce.
+### Frame generation runs off the UI isolate
+
+Building a frame is Reed-Solomon coding in Rust plus JSON that has to be read in Dart: with
+the release native library about 7 ms (profile M) and 15 ms (L) when parsed with
+`jsonDecode`, and 3.3 ms / 5.3 ms with the package's streaming dot parser, on a desktop
+core; a mid-range phone is two to three times slower. Doing that on the UI isolate every
+100 ms would drop a 60 fps frame at every data frame, so `ParticleCodeView` (default
+`useBackgroundIsolate: true`) works like this:
+
+* A long-lived worker isolate builds its own `ParticleEncoder` from the same payload,
+  options and pinned identity (session id, key), so its frames are identical to
+  `encoder.frame(i, unixSeconds: s)`. It stays two data frames ahead of the clock.
+* Frames come back as a few typed arrays (`FrameDots` is structure-of-arrays) and are
+  rebuilt on the UI isolate in tens of microseconds.
+* The liveness second is predicted from the data clock: the second at which the frame will
+  be on screen, not the second at which it was built.
+* The first frames (while the isolate starts) are built synchronously; if the worker cannot
+  start, fails, or is more than about 250 ms late with a frame, the view uses the
+  synchronous path, so it always works. If the worker is only slightly late, the view holds
+  the current frame rather than blocking the UI.
+* The worker is disposed with the view (and while `showing` is `false`).
+
+Isolates of an app share one heap, and a young-generation collection pauses all of them.
+Allocation-heavy parsing in the worker would therefore still hitch the UI, which is why
+the dots are parsed from the library's UTF-8 buffer straight into typed arrays (no
+per-dot `Map`s) with an exact fast path for numbers; `ParticleEncoder.frame` uses the same
+parser, so the synchronous path is cheaper too. Anything unexpected in the JSON makes it fall
+back to `jsonDecode`.
 
 ## Scan a code
 
