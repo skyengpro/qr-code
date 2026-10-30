@@ -1,11 +1,12 @@
 import 'dart:convert';
 import 'dart:ffi';
-import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import 'package:flutter/foundation.dart';
 
 import 'exception.dart';
 import 'ffi/bindings.dart';
+import 'frame_json.dart';
 import 'frame_spec.dart';
 
 /// How a [Shape] is chosen by the encoder.
@@ -270,6 +271,25 @@ class EncoderInfo {
   final double quietZone;
 }
 
+/// Everything a background isolate needs to rebuild an encoder that produces the same
+/// frames as the one it came from. Plain data, so it can be sent through a `SendPort`.
+class EncoderWorkerSpec {
+  const EncoderWorkerSpec._(this.payload, this.configJson);
+
+  /// The payload bytes.
+  final Uint8List payload;
+
+  /// The JSON config for `pc_encoder_new` with the session identity pinned.
+  final String configJson;
+
+  /// Rebuilds a spec from [toMessage]'s output.
+  factory EncoderWorkerSpec.fromMessage(List<Object?> m) =>
+      EncoderWorkerSpec._(m[0]! as Uint8List, m[1]! as String);
+
+  /// A form suitable for `SendPort.send`.
+  List<Object?> toMessage() => [payload, configJson];
+}
+
 /// An encoder session: turns a payload (typically COSE/CBOR) into a stream of
 /// [FrameSpec]s for [ParticleCodeView] to paint.
 ///
@@ -287,13 +307,21 @@ class ParticleEncoder implements Finalizable {
   factory ParticleEncoder.create(
     Uint8List payload, {
     EncoderOptions options = const EncoderOptions(),
-  }) => ParticleEncoder.createWith(
-    ParticleBindings.instance,
-    payload,
-    options: options,
-  );
+  }) {
+    final enc = ParticleEncoder.createWith(
+      ParticleBindings.instance,
+      payload,
+      options: options,
+    );
+    enc._workerSpec = EncoderWorkerSpec._(
+      Uint8List.fromList(payload),
+      enc._identityConfigJson(options),
+    );
+    return enc;
+  }
 
-  /// Like [ParticleEncoder.create] with explicit [bindings] (tests).
+  /// Like [ParticleEncoder.create] with explicit [bindings] (tests). Such an encoder
+  /// cannot be mirrored in a background isolate ([workerSpec] is `null`).
   factory ParticleEncoder.createWith(
     ParticleBindings bindings,
     Uint8List payload, {
@@ -305,6 +333,19 @@ class ParticleEncoder implements Finalizable {
     } on JsonUnsupportedObjectError catch (e) {
       throw ParticleCodeException('invalid encoder options: $e');
     }
+    return _createRaw(bindings, payload, configJson);
+  }
+
+  /// Creates an encoder from a raw JSON config using the process-wide bindings. This is
+  /// what a background isolate does with an [EncoderWorkerSpec].
+  factory ParticleEncoder.fromWorkerSpec(EncoderWorkerSpec spec) =>
+      _createRaw(ParticleBindings.instance, spec.payload, spec.configJson);
+
+  static ParticleEncoder _createRaw(
+    ParticleBindings bindings,
+    Uint8List payload,
+    String configJson,
+  ) {
     final configBytes = utf8.encode(configJson);
 
     final payloadPtr = calloc<Uint8>(payload.isEmpty ? 1 : payload.length);
@@ -343,6 +384,33 @@ class ParticleEncoder implements Finalizable {
       calloc.free(errPtr);
     }
   }
+
+  /// A config that makes another encoder emit exactly the same frames as this one when
+  /// asked for `frame(i, unixSeconds: s)`: the resolved profile and shape, and the
+  /// identity (session id, key) pinned. The liveness clock origin only matters for
+  /// frames requested without `unixSeconds`.
+  String _identityConfigJson(EncoderOptions options) {
+    final cfg = options.toJson()
+      ..['profile'] = info.profile.letter
+      ..['shape'] = {'kind': 'require', 'id': info.shapeId}
+      ..['session_id'] = info.sessionId
+      ..['key'] = key.toList()
+      ..['clock_origin_unix'] = options.clockOriginUnix ?? 0
+      ..remove('display');
+    return jsonEncode(cfg);
+  }
+
+  EncoderWorkerSpec? _workerSpec;
+
+  /// What a background isolate needs to build an identical encoder, or `null` for an
+  /// encoder made with [ParticleEncoder.createWith].
+  EncoderWorkerSpec? get workerSpec => _workerSpec;
+
+  int _frameCalls = 0;
+
+  /// How many frames this instance has built (on the isolate that owns it). For tests.
+  @visibleForTesting
+  int get debugFrameCalls => _frameCalls;
 
   // One NativeFinalizer per distinct `pc_encoder_free` address, kept alive for the
   // life of the isolate.
@@ -386,11 +454,22 @@ class ParticleEncoder implements Finalizable {
   FrameSpec frame(int i, {int? unixSeconds}) {
     _checkAlive();
     RangeError.checkValueInInterval(i, 0, 0xFFFFFFFF, 'i');
+    _frameCalls++;
     final ptr = unixSeconds == null
         ? _bindings.encoderFrameJson(_handle, i)
         : _bindings.encoderFrameJsonAt(_handle, i, unixSeconds);
-    final text = _bindings.takeString(ptr);
-    return FrameSpec.fromJson(_decodeObject(text, 'frame $i'));
+    if (ptr == nullptr) {
+      throw ParticleCodeException('pc_encoder_frame_json returned NULL for $i');
+    }
+    try {
+      // Parse straight from the library's UTF-8 buffer: no intermediate String.
+      final bytes = ptr.cast<Uint8>().asTypedList(ptr.length);
+      return parseFrameJsonBytes(bytes, dotCountHint: info.dotCount);
+    } on FormatException catch (e) {
+      throw ParticleCodeException('malformed frame $i JSON: ${e.message}');
+    } finally {
+      _bindings.stringFree(ptr);
+    }
   }
 
   /// The raw JSON text of frame [i] (see [frame]).

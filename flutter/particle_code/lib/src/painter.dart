@@ -144,8 +144,8 @@ class ParticleCodePainter extends CustomPainter {
   /// swatches. Payload dots drift, share a radius pulse and take the ripple.
   void _drawDots(
     _Brush b,
-    List<FrameDot> dots,
-    List<FrameDot>? prevDots, {
+    FrameDots dots,
+    FrameDots? prevDots, {
     required bool lattice,
   }) {
     if (dots.isEmpty) return;
@@ -175,40 +175,43 @@ class ParticleCodePainter extends CustomPainter {
         : null;
 
     for (var i = 0; i < dots.length; i++) {
-      final d = dots[i];
-      final colorIdx = d.color & 3;
+      final dx = dots.x[i];
+      final dy = dots.y[i];
+      final color = dots.color[i];
+      final colorIdx = color & 3;
       var rgb = ParticleCodePalette.hues[colorIdx];
-      var radius = d.radius;
+      var radius = _radius(dots.size[i]);
       var plain = true;
 
       if (fade < 1.0 && comparable) {
-        final p = prevDots[i];
-        if (p.q == d.q && p.r == d.r) {
-          if (p.color != d.color) {
-            final from = ParticleCodePalette.hues[p.color & 3];
+        if (prevDots.q[i] == dots.q[i] && prevDots.r[i] == dots.r[i]) {
+          final pc = prevDots.color[i];
+          if (pc != color) {
+            final from = ParticleCodePalette.hues[pc & 3];
             rgb = shimmer ? lerpHue(from, rgb, fade) : lerpRgb(from, rgb, fade);
             plain = false;
           }
-          radius = p.radius + (radius - p.radius) * fade;
+          final pr = _radius(prevDots.size[i]);
+          radius = pr + (radius - pr) * fade;
         }
       }
 
-      var x = d.x;
-      var y = d.y;
+      var x = dx;
+      var y = dy;
       if (dotMotion != null) {
-        dotMotion.sample(d.x, d.y, sampled);
-        x = d.x + sampled[0];
-        y = d.y + sampled[1];
+        dotMotion.sample(dx, dy, sampled);
+        x = dx + sampled[0];
+        y = dy + sampled[1];
         radius *= sampled[2];
         if (ripple != null) {
-          final amount = mo.rippleLighten(ripple, d.x, d.y, halfSide);
+          final amount = mo.rippleLighten(ripple, dx, dy, halfSide);
           if (amount > 0) {
             rgb = lighten(rgb, amount);
             plain = false;
           }
         }
       }
-      final alpha = m == null ? 1.0 : _revealAlpha(d.x, d.y);
+      final alpha = m == null ? 1.0 : _revealAlpha(dx, dy);
       if (alpha < 1.0) plain = false;
 
       if (plain && paths != null) {
@@ -282,6 +285,8 @@ class ParticleCodePainter extends CustomPainter {
     }
   }
 }
+
+double _radius(int size) => size == 0 ? CodeDims.dotRSmall : CodeDims.dotRLarge;
 
 /// A reused [Paint] with pitch-unit drawing helpers.
 class _Brush {

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
@@ -5,6 +7,7 @@ import 'package:flutter/widgets.dart';
 import 'display.dart';
 import 'encoder.dart';
 import 'frame_spec.dart';
+import 'frame_worker.dart';
 import 'motion.dart';
 import 'painter.dart';
 import 'palette.dart';
@@ -20,6 +23,9 @@ import 'palette.dart';
 /// the screen on (`particle_code/display`); both are restored when the widget is
 /// disposed or [showing] turns `false`.
 ///
+/// Frames are prefetched on a background isolate (see [useBackgroundIsolate]); the
+/// particles' liveness second is the one at which each frame will be shown.
+///
 /// The widget is a square: with [size] it is `size x size` logical pixels, otherwise it
 /// takes the largest square that fits the incoming constraints.
 class ParticleCodeView extends StatefulWidget {
@@ -33,6 +39,7 @@ class ParticleCodeView extends StatefulWidget {
     this.showing = true,
     this.margin = defaultMargin,
     this.unixClock,
+    this.useBackgroundIsolate = true,
   });
 
   /// The encoder to show. Not owned: the caller disposes it, after removing this view.
@@ -57,9 +64,19 @@ class ParticleCodeView extends StatefulWidget {
   /// Source of the wall clock in Unix seconds; defaults to `DateTime.now()`. Tests only.
   final int Function()? unixClock;
 
+  /// Build frames on a background isolate (default). The isolate has its own encoder
+  /// with the same identity, runs ahead of the data clock and hands over compact typed
+  /// arrays, so the UI isolate never does Reed-Solomon or JSON work after start-up. The
+  /// first frames, and any frame the worker is badly late with, are built synchronously;
+  /// if the isolate cannot start, the view silently stays on the synchronous path.
+  final bool useBackgroundIsolate;
+
   @override
   State<ParticleCodeView> createState() => _ParticleCodeViewState();
 }
+
+/// How many data frames the worker prefetches ahead of the clock.
+const int _prefetchAhead = 2;
 
 class _ParticleCodeViewState extends State<ParticleCodeView>
     with SingleTickerProviderStateMixin {
@@ -69,12 +86,24 @@ class _ParticleCodeViewState extends State<ParticleCodeView>
   FrameSpec? _previous;
   int _index = 0;
   double _t = 0;
+  int _elapsedMs = 0;
   bool _holdsDisplay = false;
+
+  // Background generation.
+  FrameWorker? _worker;
+  bool _workerFailed = false;
+  bool _workerDelivered = false;
+  final Map<int, FrameSpec> _ready = {};
+  final Set<int> _requested = {};
+  int? _lateSinceMs;
 
   int get _fps => widget.encoder.fps < 1 ? 1 : widget.encoder.fps;
 
-  int _now() =>
-      widget.unixClock?.call() ?? DateTime.now().millisecondsSinceEpoch ~/ 1000;
+  /// Wall clock in milliseconds. An injected [ParticleCodeView.unixClock] counts whole
+  /// seconds.
+  int _nowMs() => widget.unixClock != null
+      ? widget.unixClock!() * 1000
+      : DateTime.now().millisecondsSinceEpoch;
 
   @override
   void initState() {
@@ -87,7 +116,10 @@ class _ParticleCodeViewState extends State<ParticleCodeView>
   void didUpdateWidget(ParticleCodeView old) {
     super.didUpdateWidget(old);
     if (old.encoder != widget.encoder) {
+      _workerFailed = false;
       _stop();
+    } else if (old.useBackgroundIsolate != widget.useBackgroundIsolate) {
+      _stopWorker();
     }
     _sync();
   }
@@ -95,6 +127,7 @@ class _ParticleCodeViewState extends State<ParticleCodeView>
   @override
   void dispose() {
     _ticker.dispose();
+    _stopWorker();
     _releaseDisplay();
     super.dispose();
   }
@@ -104,10 +137,12 @@ class _ParticleCodeViewState extends State<ParticleCodeView>
     if (widget.showing) {
       if (_current == null) {
         _t = 0;
+        _elapsedMs = 0;
         _index = 0;
         _previous = null;
-        _current = _fetch(0);
+        _current = _fetchSync(0);
       }
+      _startWorker();
       if (!_ticker.isActive) {
         // Restarting resets `elapsed`, so the clock restarts with the frame index.
         _ticker.start();
@@ -122,7 +157,45 @@ class _ParticleCodeViewState extends State<ParticleCodeView>
     if (_ticker.isActive) _ticker.stop();
     _current = null;
     _previous = null;
+    _stopWorker();
     _releaseDisplay();
+  }
+
+  void _startWorker() {
+    if (_worker != null || _workerFailed || !widget.useBackgroundIsolate) {
+      return;
+    }
+    final spec = widget.encoder.workerSpec;
+    if (spec == null) return;
+    _worker = FrameWorker.start(
+      spec,
+      onFrame: _onWorkerFrame,
+      onFailure: _onWorkerFailure,
+    );
+  }
+
+  void _stopWorker() {
+    _worker?.dispose();
+    _worker = null;
+    _workerDelivered = false;
+    _ready.clear();
+    _requested.clear();
+    _lateSinceMs = null;
+  }
+
+  void _onWorkerFrame(int index, FrameSpec frame) {
+    _requested.remove(index);
+    _workerDelivered = true;
+    if (index > _index) _ready[index] = frame;
+  }
+
+  void _onWorkerFailure(Object error) {
+    debugPrint(
+      'particle_code: background frame generation failed ($error); '
+      'building frames on the UI isolate instead',
+    );
+    _workerFailed = true;
+    _stopWorker();
   }
 
   void _acquireDisplay() {
@@ -137,8 +210,30 @@ class _ParticleCodeViewState extends State<ParticleCodeView>
     ParticleCodeDisplay.release();
   }
 
-  FrameSpec _fetch(int index) =>
-      widget.encoder.frame(index, unixSeconds: _now());
+  /// Builds frame [index] on this isolate, for the current wall-clock second.
+  FrameSpec _fetchSync(int index) =>
+      widget.encoder.frame(index, unixSeconds: _nowMs() ~/ 1000);
+
+  /// The wall-clock second at which frame [index] will be on screen, predicted from the
+  /// data clock: `now + (start of frame - elapsed)`.
+  int _predictedUnix(int index) {
+    final startMs = index * 1000 ~/ _fps;
+    return (_nowMs() + startMs - _elapsedMs) ~/ 1000;
+  }
+
+  /// Keeps `[clockIndex, clockIndex + _prefetchAhead]` requested from the worker.
+  void _prefetch(int clockIndex) {
+    final worker = _worker;
+    if (worker == null || !worker.isReady) return;
+    _requested.removeWhere((i) => i < clockIndex);
+    for (var i = clockIndex; i <= clockIndex + _prefetchAhead; i++) {
+      if (i == _index || _ready.containsKey(i) || _requested.contains(i)) {
+        continue;
+      }
+      _requested.add(i);
+      worker.request(i, _predictedUnix(i), floor: clockIndex);
+    }
+  }
 
   void _onTick(Duration elapsed) {
     if (widget.encoder.isDisposed) {
@@ -146,19 +241,42 @@ class _ParticleCodeViewState extends State<ParticleCodeView>
       return;
     }
     final micros = elapsed.inMicroseconds;
-    final index = (micros * _fps) ~/ 1000000;
+    _elapsedMs = micros ~/ 1000;
+    final clockIndex = (micros * _fps) ~/ 1000000;
+
     FrameSpec? next;
-    if (index != _index || _current == null) {
-      next = _fetch(index);
-    }
-    setState(() {
-      if (next != null) {
-        _previous = _current;
-        _current = next;
-        _index = index;
+    var nextIndex = _index;
+    if (clockIndex != _index || _current == null) {
+      // The newest prefetched frame that is due.
+      for (final i in _ready.keys) {
+        if (i <= clockIndex && i > nextIndex) nextIndex = i;
       }
-      _t = micros / 1e6;
-    });
+      if (nextIndex != _index) {
+        next = _ready[nextIndex];
+        _lateSinceMs = null;
+      } else if (_worker != null && _workerDelivered && _worker!.isReady) {
+        // The worker is running but late with this frame: keep showing the current
+        // one, up to a limit, instead of stalling the UI with a synchronous build.
+        _lateSinceMs ??= _elapsedMs;
+        final limit = math.max(250, 3000 ~/ _fps);
+        if (_elapsedMs - _lateSinceMs! > limit) {
+          nextIndex = clockIndex;
+          next = _fetchSync(clockIndex);
+          _lateSinceMs = null;
+        }
+      } else {
+        nextIndex = clockIndex;
+        next = _fetchSync(clockIndex);
+      }
+    }
+    _ready.removeWhere((i, _) => i <= nextIndex);
+    if (next != null) {
+      _previous = _current;
+      _current = next;
+      _index = nextIndex;
+    }
+    _prefetch(clockIndex);
+    setState(() => _t = micros / 1e6);
   }
 
   @override

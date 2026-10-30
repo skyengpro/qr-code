@@ -59,6 +59,7 @@ void main() {
     await tester.pumpWidget(
       host(
         ParticleCodeView(
+          useBackgroundIsolate: false,
           encoder: enc,
           size: 200,
           unixClock: () {
@@ -101,7 +102,11 @@ void main() {
   ) async {
     final enc = _encoder(fps: 20);
     addTearDown(enc.dispose);
-    await tester.pumpWidget(host(ParticleCodeView(encoder: enc, size: 100)));
+    await tester.pumpWidget(
+      host(
+        ParticleCodeView(useBackgroundIsolate: false, encoder: enc, size: 100),
+      ),
+    );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 55));
     expect(_painter(tester).frame.index, 1);
@@ -114,7 +119,14 @@ void main() {
     addTearDown(enc.dispose);
     var now = 1700000000;
     await tester.pumpWidget(
-      host(ParticleCodeView(encoder: enc, size: 100, unixClock: () => now)),
+      host(
+        ParticleCodeView(
+          useBackgroundIsolate: false,
+          encoder: enc,
+          size: 100,
+          unixClock: () => now,
+        ),
+      ),
     );
     final first = _painter(
       tester,
@@ -142,7 +154,11 @@ void main() {
   ) async {
     final enc = _encoder();
     addTearDown(enc.dispose);
-    await tester.pumpWidget(host(ParticleCodeView(encoder: enc, size: 100)));
+    await tester.pumpWidget(
+      host(
+        ParticleCodeView(useBackgroundIsolate: false, encoder: enc, size: 100),
+      ),
+    );
     await tester.pump();
     expect(displayCalls, [true]);
     expect(ParticleCodeDisplay.holders, 1);
@@ -158,8 +174,14 @@ void main() {
   ) async {
     final enc = _encoder();
     addTearDown(enc.dispose);
-    Widget view(bool showing) =>
-        host(ParticleCodeView(encoder: enc, size: 100, showing: showing));
+    Widget view(bool showing) => host(
+      ParticleCodeView(
+        useBackgroundIsolate: false,
+        encoder: enc,
+        size: 100,
+        showing: showing,
+      ),
+    );
 
     await tester.pumpWidget(view(true));
     await tester.pump();
@@ -198,7 +220,14 @@ void main() {
     final enc = _encoder();
     addTearDown(enc.dispose);
     await tester.pumpWidget(
-      host(ParticleCodeView(encoder: enc, size: 100, showing: false)),
+      host(
+        ParticleCodeView(
+          useBackgroundIsolate: false,
+          encoder: enc,
+          size: 100,
+          showing: false,
+        ),
+      ),
     );
     await tester.pumpWidget(host(const SizedBox()));
     expect(displayCalls, isEmpty);
@@ -211,8 +240,16 @@ void main() {
       host(
         Column(
           children: [
-            ParticleCodeView(encoder: enc, size: 50),
-            ParticleCodeView(encoder: enc, size: 50),
+            ParticleCodeView(
+              useBackgroundIsolate: false,
+              encoder: enc,
+              size: 50,
+            ),
+            ParticleCodeView(
+              useBackgroundIsolate: false,
+              encoder: enc,
+              size: 50,
+            ),
           ],
         ),
       ),
@@ -220,7 +257,17 @@ void main() {
     await tester.pump();
     expect(displayCalls, [true]);
     await tester.pumpWidget(
-      host(Column(children: [ParticleCodeView(encoder: enc, size: 50)])),
+      host(
+        Column(
+          children: [
+            ParticleCodeView(
+              useBackgroundIsolate: false,
+              encoder: enc,
+              size: 50,
+            ),
+          ],
+        ),
+      ),
     );
     expect(displayCalls, [true], reason: 'one view still showing');
     await tester.pumpWidget(host(const SizedBox()));
@@ -231,7 +278,11 @@ void main() {
     messenger.setMockMethodCallHandler(ParticleCodeDisplay.channel, null);
     final enc = _encoder();
     addTearDown(enc.dispose);
-    await tester.pumpWidget(host(ParticleCodeView(encoder: enc, size: 100)));
+    await tester.pumpWidget(
+      host(
+        ParticleCodeView(useBackgroundIsolate: false, encoder: enc, size: 100),
+      ),
+    );
     await tester.pump(const Duration(milliseconds: 150));
     await tester.pumpWidget(host(const SizedBox()));
     expect(tester.takeException(), isNull);
@@ -240,7 +291,11 @@ void main() {
   testWidgets('sizing: explicit size and fill-the-square', (tester) async {
     final enc = _encoder();
     addTearDown(enc.dispose);
-    await tester.pumpWidget(host(ParticleCodeView(encoder: enc, size: 123)));
+    await tester.pumpWidget(
+      host(
+        ParticleCodeView(useBackgroundIsolate: false, encoder: enc, size: 123),
+      ),
+    );
     expect(tester.getSize(find.byType(ParticleCodeView)), const Size(123, 123));
     await tester.pumpWidget(
       Directionality(
@@ -248,7 +303,7 @@ void main() {
         child: Align(
           child: ConstrainedBox(
             constraints: BoxConstraints.loose(const Size(300, 500)),
-            child: ParticleCodeView(encoder: enc),
+            child: ParticleCodeView(useBackgroundIsolate: false, encoder: enc),
           ),
         ),
       ),
@@ -264,6 +319,7 @@ void main() {
     await tester.pumpWidget(
       host(
         ParticleCodeView(
+          useBackgroundIsolate: false,
           encoder: enc,
           size: 100,
           motion: const MotionConfig.all(),
@@ -277,7 +333,14 @@ void main() {
     expect(p.seed, seedFromSession(99));
 
     await tester.pumpWidget(
-      host(ParticleCodeView(encoder: enc, size: 100, motion: null)),
+      host(
+        ParticleCodeView(
+          useBackgroundIsolate: false,
+          encoder: enc,
+          size: 100,
+          motion: null,
+        ),
+      ),
     );
     expect(_painter(tester).motion, isNull);
   });
@@ -287,11 +350,19 @@ void main() {
     final b = _encoder();
     addTearDown(a.dispose);
     addTearDown(b.dispose);
-    await tester.pumpWidget(host(ParticleCodeView(encoder: a, size: 100)));
+    await tester.pumpWidget(
+      host(
+        ParticleCodeView(useBackgroundIsolate: false, encoder: a, size: 100),
+      ),
+    );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
     expect(_painter(tester).frame.index, 3);
-    await tester.pumpWidget(host(ParticleCodeView(encoder: b, size: 100)));
+    await tester.pumpWidget(
+      host(
+        ParticleCodeView(useBackgroundIsolate: false, encoder: b, size: 100),
+      ),
+    );
     expect(_painter(tester).frame.index, 0);
     expect(_painter(tester).prev, isNull);
   });
@@ -301,7 +372,11 @@ void main() {
   ) async {
     final enc = _encoder();
     addTearDown(enc.dispose);
-    await tester.pumpWidget(host(ParticleCodeView(encoder: enc, size: 100)));
+    await tester.pumpWidget(
+      host(
+        ParticleCodeView(useBackgroundIsolate: false, encoder: enc, size: 100),
+      ),
+    );
     await tester.pump();
     for (var i = 0; i < 6; i++) {
       await tester.pump(const Duration(milliseconds: 100));
