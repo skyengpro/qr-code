@@ -86,6 +86,7 @@ crates/particlecode-ffi      flutter_rust_bridge-style API and a C ABI for the F
 crates/particlecode-jni      Android JNI shim over the decoder (CameraX buffers read in place)
 android/                     Kotlin wrapper + CameraX analyzer (library module); scripts/build-android.sh
 apple/                       ParticleCodeKit Swift package + podspec over ParticleCodeFFI.xcframework; scripts/build-xcframework.sh
+flutter/particle_code/       Flutter plugin (sender in Dart over dart:ffi, scanner on the native pipelines) + example app
 examples/                    runnable examples and sample CBOR payloads
 fuzz/                        cargo-fuzz target for the header decoder
 ```
@@ -130,6 +131,40 @@ if let Some(lock) = particlecode_vision::locate(&yuv.y) {
     // `rx.take_ready()` streams verified segments in order while the rest arrives.
 }
 ```
+
+## Flutter
+
+[`flutter/particle_code`](flutter/particle_code) is a Flutter plugin for Android and iOS. The
+sender encodes through the Rust library over `dart:ffi` and paints the animated code in Dart; the
+scanner is the native camera pipeline (CameraX, AVFoundation) and only reports progress and the
+final payload to Dart.
+
+<img src="docs/images/flutter_send.png" alt="The example app's Send tab showing a heart-shaped code" width="260">
+
+```dart
+import 'package:particle_code/particle_code.dart';
+
+// Sender: show a payload as an animated field of dots.
+final encoder = ParticleEncoder.create(
+  cborBytes,
+  options: const EncoderOptions(profile: CodeProfile.m, shape: Shape.heart),
+);
+ParticleCodeView(encoder: encoder, size: 320, motion: const MotionConfig());
+
+// Scanner: camera preview with anchors and progress, then the payload.
+final scanner = ParticleScanner();
+scanner.events.listen((e) {
+  if (e is ScanDone) handle(e.payload);
+});
+if (await scanner.requestPermission()) await scanner.start();
+// ... ParticleScannerPreview(scanner: scanner)
+```
+
+Build the native libraries first (`scripts/build-android.sh`, `scripts/build-xcframework.sh
+--flutter`); see the [plugin README](flutter/particle_code/README.md). The
+[example app](flutter/particle_code/example) has a Send tab (sample ticket and credential or free
+text, profile, shape, mood) and a Scan tab (camera, progress, result sheet), and
+`.github/workflows/flutter.yml` builds it for Android and iOS on every pull request.
 
 ## Development
 

@@ -1,0 +1,28 @@
+name: particle_code
+description: Particle Code for Flutter. Show payloads as animated dot fields and scan them with the camera.
+version: 0.1.0
+publish_to: none
+repository: https://github.com/vaam-apps/qr-code
+
+environment:
+  sdk: ^3.9.0
+  flutter: ">=3.35.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ffi: ^2.1.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.vaam.particlecode.flutter
+        pluginClass: ParticleCodePlugin
+      ios:
+        pluginClass: ParticleCodePlugin
