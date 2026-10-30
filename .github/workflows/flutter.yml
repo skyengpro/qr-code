@@ -1,0 +1,210 @@
+name: Flutter
+
+# The particle_code Flutter plugin (flutter/particle_code) and its example app.
+#
+#   dart     analyze + test the plugin and the example against the host Rust library
+#   android  build the JNI library, then the example APK; the APK must carry it
+#   ios      build the xcframework, then the example app for a device (no codesign), debug and
+#            release; the Runner binary must export the dart:ffi symbols
+#
+# Separate from ci.yml, android.yml and apple.yml: it needs Flutter and is slower.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: flutter-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  FLUTTER_VERSION: "3.47.9"
+
+jobs:
+  dart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # The plugin finds target/debug by itself; naming it makes a wrong build obvious.
+      PARTICLECODE_LIB: ${{ github.workspace }}/target/debug/libparticlecode_ffi.so
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.97.0
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      # The host library the encoder tests load through dart:ffi.
+      - name: Build the host library
+        run: cargo build -p particlecode-ffi
+
+      - name: Plugin, flutter pub get
+        working-directory: flutter/particle_code
+        run: flutter pub get
+
+      - name: Plugin, flutter analyze
+        working-directory: flutter/particle_code
+        run: flutter analyze
+
+      - name: Plugin, flutter test
+        working-directory: flutter/particle_code
+        run: flutter test
+
+      - name: Example, flutter pub get
+        working-directory: flutter/particle_code/example
+        run: flutter pub get
+
+      - name: Example, flutter analyze
+        working-directory: flutter/particle_code/example
+        run: flutter analyze
+
+      - name: Example, flutter test
+        working-directory: flutter/particle_code/example
+        run: flutter test
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-ndk
+        run: cargo install --locked cargo-ndk
+
+      # ubuntu-latest ships the Android SDK and NDK (ANDROID_NDK_LATEST_HOME, ANDROID_HOME);
+      # the script finds them. It writes android/particlecode/src/main/jniLibs, which the
+      # plugin's Gradle build packages.
+      - name: Build libparticlecode_jni.so for arm64-v8a, armeabi-v7a, x86_64
+        run: scripts/build-android.sh
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: flutter pub get
+        working-directory: flutter/particle_code/example
+        run: flutter pub get
+
+      - name: flutter build apk --debug
+        working-directory: flutter/particle_code/example
+        run: flutter build apk --debug
+
+      - name: The APK carries the native library for every ABI
+        working-directory: flutter/particle_code/example
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-debug.apk
+          test -f "$apk"
+          listing=$(unzip -l "$apk")
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            grep -q "lib/$abi/libparticlecode_jni.so" <<< "$listing" \
+              || { echo "lib/$abi/libparticlecode_jni.so is missing from $apk"; exit 1; }
+            echo "found lib/$abi/libparticlecode_jni.so"
+          done
+
+      # The CAMERA permission comes from the plugin's manifest, not the app's, so this
+      # checks the manifest merge. aapt2 ships with the SDK build tools on the runner.
+      - name: The merged manifest asks for the camera and targets minSdk 24
+        working-directory: flutter/particle_code/example
+        run: |
+          set -euo pipefail
+          apk="$PWD/build/app/outputs/flutter-apk/app-debug.apk"
+          aapt2=$(ls -d "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/*/aapt2 | sort -V | tail -n 1)
+          perms=$("$aapt2" dump permissions "$apk")
+          echo "$perms"
+          grep -q "android.permission.CAMERA" <<< "$perms"
+          badging=$("$aapt2" dump badging "$apk")
+          grep -q "sdkVersion:'24'" <<< "$badging" \
+            || { echo "minSdk is not 24"; grep sdkVersion <<< "$badging"; exit 1; }
+
+      # Convenience download, not a check: a full artifact quota must not fail the job.
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: particle-code-example-debug-apk
+          path: flutter/particle_code/example/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  ios:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+
+      # rust-toolchain.toml pins 1.97.0 (minimal profile) for this directory. Make sure the
+      # toolchain that cargo resolves here, not only the one installed above, has the targets.
+      - name: Rust targets for the pinned toolchain
+        run: |
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+          rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      # Every pc_* function of the header must be referenced by the plugin's SymbolKeeper.
+      - name: SymbolKeeper covers the C header
+        run: flutter/particle_code/ios/tool/check-symbols.sh
+
+      # Leaves ParticleCodeFFI.xcframework in flutter/particle_code/ios/Frameworks, which the
+      # plugin's podspec vendors.
+      - name: Build ParticleCodeFFI.xcframework for the plugin
+        run: scripts/build-xcframework.sh --flutter --no-zip
+
+      - name: flutter pub get
+        working-directory: flutter/particle_code/example
+        run: flutter pub get
+
+      # Device build without signing: links the app for arm64, which is where the
+      # force_load / SymbolKeeper arrangement has to hold.
+      - name: flutter build ios --debug --no-codesign
+        working-directory: flutter/particle_code/example
+        run: flutter build ios --debug --no-codesign
+
+      - name: The debug app exports the dart:ffi symbols
+        working-directory: flutter/particle_code/example
+        run: |
+          set -euo pipefail
+          tool/check_ios_symbols.sh build/ios/iphoneos/Runner.app
+
+      # Release turns on dead-stripping and symbol stripping, which is what would remove
+      # functions that only Dart calls.
+      - name: flutter build ios --release --no-codesign
+        working-directory: flutter/particle_code/example
+        run: flutter build ios --release --no-codesign
+
+      - name: The release app exports the dart:ffi symbols
+        working-directory: flutter/particle_code/example
+        run: |
+          set -euo pipefail
+          tool/check_ios_symbols.sh build/ios/iphoneos/Runner.app
