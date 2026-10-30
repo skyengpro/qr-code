@@ -31,11 +31,12 @@ Pod::Spec.new do |s|
   # force_load below must apply to the same link step that contains the Swift code.
   s.static_framework = true
 
-  # The plugin itself plus ParticleCodeKit's sources. Classes/ParticleCodeKit is a relative
-  # symlink to apple/ParticleCodeKit/Sources/ParticleCodeKit (pod sources must live inside
-  # the pod directory, and one set of Swift sources then serves SwiftPM, the ParticleCodeKit
-  # pod and this plugin). Ruby's `**` does not descend into symlinked directories, so the
-  # link is named explicitly; the Kit's sources are a flat directory.
+  # The plugin itself plus ParticleCodeKit's sources. Pod sources must live inside the pod
+  # directory, so Classes/ParticleCodeKit is a real directory holding one relative symlink per
+  # file of apple/ParticleCodeKit/Sources/ParticleCodeKit: one set of Swift sources serves
+  # SwiftPM, the ParticleCodeKit pod and this plugin. Not a symlinked *directory*: CocoaPods
+  # lists pod files with a `**` glob, which does not descend into symlinked directories, so
+  # those files would silently be left out (tool/check-kit-links.sh guards the links).
   s.source_files = 'Classes/*.swift', 'Classes/ParticleCodeKit/*.swift'
 
   # Static-library xcframework (scripts/build-xcframework.sh) with particlecode.h and a

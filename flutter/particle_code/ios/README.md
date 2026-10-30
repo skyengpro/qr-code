@@ -33,10 +33,12 @@ The app's `Info.plist` needs a camera explanation, or iOS kills the app when the
 
 ## Source layout
 
-* `Classes/*.swift` is the plugin. `Classes/ParticleCodeKit` is a committed relative symlink to
-  `apple/ParticleCodeKit/Sources/ParticleCodeKit`, so SwiftPM, the `ParticleCodeKit` pod and this
-  plugin compile the same files. The podspec names the link explicitly because Ruby's `**` glob
-  does not descend into symlinked directories.
+* `Classes/*.swift` is the plugin. `Classes/ParticleCodeKit/` holds one committed relative
+  symlink per file of `apple/ParticleCodeKit/Sources/ParticleCodeKit`, so SwiftPM, the
+  `ParticleCodeKit` pod and this plugin compile the same files. It is deliberately not a
+  symlinked directory: CocoaPods lists pod files with a `**` glob that does not descend into
+  symlinked directories. When you add a file to the Kit, add its link here;
+  `tool/check-kit-links.sh` (run in CI) fails otherwise.
 * `import ParticleCodeFFI` resolves through the xcframework's `module.modulemap`.
 
 ## Why `-force_load` and the symbol keeper

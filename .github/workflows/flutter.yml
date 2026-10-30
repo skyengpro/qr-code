@@ -176,6 +176,10 @@ jobs:
       - name: SymbolKeeper covers the C header
         run: flutter/particle_code/ios/tool/check-symbols.sh
 
+      # Every ParticleCodeKit source must be linked into the plugin's Classes/ParticleCodeKit.
+      - name: ParticleCodeKit sources are linked into the plugin pod
+        run: flutter/particle_code/ios/tool/check-kit-links.sh
+
       # Leaves ParticleCodeFFI.xcframework in flutter/particle_code/ios/Frameworks, which the
       # plugin's podspec vendors.
       - name: Build ParticleCodeFFI.xcframework for the plugin
