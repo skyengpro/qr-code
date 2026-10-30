@@ -13,7 +13,7 @@
 #   apple/ParticleCodeKit/Frameworks/...xcframework   copy the Swift package and podspec use
 #                                                     (SwiftPM requires binary targets inside
 #                                                     the package; the copy is git-ignored)
-#   flutter/particle_code/ios/Frameworks/...          with --flutter: copy for the Flutter plugin's
+#   flutter/particle_code/ios/particle_code/Frameworks/... with --flutter: copy for the Flutter plugin's
 #                                                     podspec (ignored by git; pods cannot reach
 #                                                     outside their own directory)
 #
@@ -172,11 +172,11 @@ cp -R "$XCF" "$PKG_COPY"
 
 # The Flutter plugin's podspec vendors its own copy for the same reason.
 if [ "$WITH_FLUTTER" -eq 1 ]; then
-    FLUTTER_COPY="$ROOT/flutter/particle_code/ios/Frameworks/ParticleCodeFFI.xcframework"
+    FLUTTER_COPY="$ROOT/flutter/particle_code/ios/particle_code/Frameworks/ParticleCodeFFI.xcframework"
     rm -rf "$FLUTTER_COPY"
     mkdir -p "$(dirname "$FLUTTER_COPY")"
     cp -R "$XCF" "$FLUTTER_COPY"
-    echo "==> copied to flutter/particle_code/ios/Frameworks/"
+    echo "==> copied to flutter/particle_code/ios/particle_code/Frameworks/"
 fi
 
 # ---- 5. zip + checksum ----------------------------------------------------------------------

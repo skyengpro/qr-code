@@ -5,7 +5,9 @@
 #
 #   scripts/build-xcframework.sh --flutter     # from the repository root, on a Mac
 #
-# which leaves ios/Frameworks/ParticleCodeFFI.xcframework (git-ignored).
+# which leaves ios/particle_code/Frameworks/ParticleCodeFFI.xcframework (git-ignored). The same
+# sources and xcframework also form the Swift package ios/particle_code/Package.swift, which
+# Flutter uses instead of this pod when Swift Package Manager is enabled.
 #
 Pod::Spec.new do |s|
   s.name             = 'particle_code'
@@ -22,7 +24,7 @@ Pod::Spec.new do |s|
   s.author           = { 'Stephane Segning' => 'stephane.segning@ssegning.com' }
   s.source           = { :path => '.' }
 
-  s.platform = :ios, '13.0'
+  s.platform = :ios, '15.0'
   s.swift_version = '5.9'
   s.dependency 'Flutter'
 
@@ -31,17 +33,21 @@ Pod::Spec.new do |s|
   # linked into the executable itself, next to the Swift code that keeps them.
   s.static_framework = true
 
-  # The plugin itself plus ParticleCodeKit's sources. Pod sources must live inside the pod
-  # directory, so Classes/ParticleCodeKit is a real directory holding one relative symlink per
+  # The plugin itself plus ParticleCodeKit's sources, in the SwiftPM layout so the pod and the
+  # Swift package compile the same files. Pod sources must live inside the pod directory, so
+  # Sources/particle_code/ParticleCodeKit is a real directory holding one relative symlink per
   # file of apple/ParticleCodeKit/Sources/ParticleCodeKit: one set of Swift sources serves
   # SwiftPM, the ParticleCodeKit pod and this plugin. Not a symlinked *directory*: CocoaPods
   # lists pod files with a `**` glob, which does not descend into symlinked directories, so
   # those files would silently be left out (tool/check-kit-links.sh guards the links).
-  s.source_files = 'Classes/*.swift', 'Classes/ParticleCodeKit/*.swift'
+  s.source_files = 'particle_code/Sources/particle_code/**/*.swift'
+  s.resource_bundles = {
+    'particle_code_privacy' => ['particle_code/Sources/particle_code/PrivacyInfo.xcprivacy'],
+  }
 
   # Static-library xcframework (scripts/build-xcframework.sh) with particlecode.h and a
   # module.modulemap in its Headers, which is what makes `import ParticleCodeFFI` work.
-  s.vendored_frameworks = 'Frameworks/ParticleCodeFFI.xcframework'
+  s.vendored_frameworks = 'particle_code/Frameworks/ParticleCodeFFI.xcframework'
 
   s.frameworks = 'AVFoundation', 'CoreVideo', 'CoreMedia', 'UIKit'
   # Rust's std needs libiconv (libc, libm and libSystem are linked anyway).
@@ -55,7 +61,7 @@ Pod::Spec.new do |s|
 
   # Keep the pc_* C functions that only Dart calls. CocoaPods links the vendored static
   # xcframework lazily (only archive members something references are loaded), and release
-  # builds dead-strip. Classes/SymbolKeeper.swift references every pc_* function from live
+  # builds dead-strip. Sources/particle_code/SymbolKeeper.swift references every pc_* function from live
   # code, which keeps them through both; tool/check-symbols.sh keeps it in step with the
   # header, and CI checks the built app's symbol table. (A -force_load of the archive is not
   # used: CocoaPods does not expose the copied slice as a declared build input, so Xcode

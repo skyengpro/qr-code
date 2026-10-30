@@ -28,7 +28,7 @@ flutter run            # on a phone: the simulator and emulator have no camera
 ```
 
 The iOS deployment target is 15.0, the lowest Flutter 3.47 accepts (it rewrites anything
-lower); the plugin itself supports iOS 13. The Release configuration sets
+lower), and the plugin's minimum too. The Release configuration sets
 `STRIP_STYLE = non-global` so the `pc_*` functions that only Dart calls survive stripping.
 
 ## Tests

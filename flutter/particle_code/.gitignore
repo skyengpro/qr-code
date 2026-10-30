@@ -4,4 +4,4 @@ build/
 .flutter-plugins
 .flutter-plugins-dependencies
 pubspec.lock
-ios/Frameworks/
+ios/particle_code/Frameworks/
