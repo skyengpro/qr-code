@@ -37,8 +37,8 @@ in current Flutter) and falls back to CocoaPods otherwise
 * **CocoaPods:** `particle_code.podspec` compiles the same `particle_code/Sources/particle_code`
   files and vendors the same xcframework.
 
-CI builds the example app both ways (debug and release with SwiftPM, release with CocoaPods) and
-checks every build for the `dart:ffi` symbols.
+CI builds the example app with SwiftPM (debug and release) and a fresh app created with SwiftPM
+disabled with CocoaPods (release), and checks every build for the `dart:ffi` symbols.
 
 The app's `Info.plist` needs a camera explanation, or iOS kills the app when the scanner starts:
 

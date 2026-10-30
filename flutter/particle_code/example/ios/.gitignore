@@ -33,8 +33,7 @@ Runner/GeneratedPluginRegistrant.*
 !default.pbxuser
 !default.perspectivev3
 
-# The example builds through Swift Package Manager. With SwiftPM disabled
-# (`flutter config --no-enable-swift-package-manager`), Flutter generates a standard
-# Podfile on the next build; it is not part of the project.
+# The example builds through Swift Package Manager and has no Podfile; ignore one that a
+# CocoaPods-based build would generate.
 Podfile
 Podfile.lock
