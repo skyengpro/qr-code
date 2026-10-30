@@ -3,7 +3,7 @@
 #
 # Dart reaches the encoder with DynamicLibrary.process(), so the functions must be in the
 # app's own Mach-O image, global and not stripped, even though no native code calls them.
-# That is what the podspec's -force_load and Classes/SymbolKeeper.swift are for.
+# That is what the plugin's SymbolKeeper.swift is for.
 #
 #   tool/check_ios_symbols.sh build/ios/iphoneos/Runner.app
 #

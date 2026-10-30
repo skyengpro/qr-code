@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fails if a pc_* function declared in particlecode.h is not referenced by
-# Classes/SymbolKeeper.swift (it would be dead-stripped from the app, and Dart's
+# particle_code/Sources/particle_code/SymbolKeeper.swift (it would be dead-stripped from the app, and Dart's
 # DynamicLibrary.process() lookup would fail in release builds).
 #
 #   flutter/particle_code/ios/tool/check-symbols.sh
@@ -8,7 +8,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HEADER="$HERE/../../../../crates/particlecode-ffi/include/particlecode.h"
-KEEPER="$HERE/../Classes/SymbolKeeper.swift"
+KEEPER="$HERE/../particle_code/Sources/particle_code/SymbolKeeper.swift"
 
 missing=0
 # Declarations look like `type pc_name(` at the start of a line or after `*`.

@@ -32,3 +32,8 @@ Runner/GeneratedPluginRegistrant.*
 !default.mode2v3
 !default.pbxuser
 !default.perspectivev3
+
+# The example builds through Swift Package Manager and has no Podfile; ignore one that a
+# CocoaPods-based build would generate.
+Podfile
+Podfile.lock

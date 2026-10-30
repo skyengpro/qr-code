@@ -178,11 +178,11 @@ jobs:
       - name: SymbolKeeper covers the C header
         run: flutter/particle_code/ios/tool/check-symbols.sh
 
-      # Every ParticleCodeKit source must be linked into the plugin's Classes/ParticleCodeKit.
+      # Every ParticleCodeKit source must be linked into the plugin's Sources/particle_code/ParticleCodeKit.
       - name: ParticleCodeKit sources are linked into the plugin pod
         run: flutter/particle_code/ios/tool/check-kit-links.sh
 
-      # Leaves ParticleCodeFFI.xcframework in flutter/particle_code/ios/Frameworks, which the
+      # Leaves ParticleCodeFFI.xcframework in flutter/particle_code/ios/particle_code/Frameworks, which the
       # plugin's podspec vendors.
       - name: Build ParticleCodeFFI.xcframework for the plugin
         run: scripts/build-xcframework.sh --flutter --no-zip
@@ -191,26 +191,52 @@ jobs:
         working-directory: flutter/particle_code/example
         run: flutter pub get
 
-      # Device build without signing: links the app for arm64, which is where the
-      # force_load / SymbolKeeper arrangement has to hold.
-      - name: flutter build ios --debug --no-codesign
-        working-directory: flutter/particle_code/example
-        run: flutter build ios --debug --no-codesign
-
-      - name: The debug app exports the dart:ffi symbols
+      # Device builds without signing: they link the app for arm64, which is where the
+      # SymbolKeeper arrangement has to hold. First through Swift Package Manager (the
+      # plugin's ios/particle_code/Package.swift), then through CocoaPods (the podspec).
+      - name: "SwiftPM: flutter build ios --debug --no-codesign"
         working-directory: flutter/particle_code/example
         run: |
           set -euo pipefail
-          tool/check_ios_symbols.sh build/ios/iphoneos/Runner.app
+          flutter config --enable-swift-package-manager
+          flutter build ios --debug --no-codesign 2>&1 | tee build-spm.log
+          # Flutter falls back to CocoaPods for plugins without a Package.swift and says so.
+          if grep -q "do not support Swift Package Manager" build-spm.log; then
+            echo "particle_code was not built through Swift Package Manager"; exit 1
+          fi
+          grep -q "FlutterGeneratedPluginSwiftPackage" ios/Runner.xcodeproj/project.pbxproj \
+            || { echo "Runner has no SwiftPM plugin integration"; exit 1; }
+
+      - name: "SwiftPM: the debug app exports the dart:ffi symbols"
+        working-directory: flutter/particle_code/example
+        run: tool/check_ios_symbols.sh build/ios/iphoneos/Runner.app
 
       # Release turns on dead-stripping and symbol stripping, which is what would remove
       # functions that only Dart calls.
-      - name: flutter build ios --release --no-codesign
+      - name: "SwiftPM: flutter build ios --release --no-codesign"
         working-directory: flutter/particle_code/example
         run: flutter build ios --release --no-codesign
 
-      - name: The release app exports the dart:ffi symbols
+      - name: "SwiftPM: the release app exports the dart:ffi symbols"
         working-directory: flutter/particle_code/example
+        run: tool/check_ios_symbols.sh build/ios/iphoneos/Runner.app
+
+      # The podspec must keep working for apps that have not moved to SwiftPM. The example's
+      # project carries SwiftPM integration (Flutter 3.47 creates projects with it), so this
+      # builds a fresh app created with SwiftPM disabled, the way a CocoaPods-based consumer
+      # looks, and checks it the same way.
+      - name: "CocoaPods: release build of a fresh app that uses the plugin"
         run: |
           set -euo pipefail
-          tool/check_ios_symbols.sh build/ios/iphoneos/Runner.app
+          flutter config --no-enable-swift-package-manager
+          app="$RUNNER_TEMP/pods_app"
+          flutter create --org com.vaam.particlecode --platforms ios --project-name pods_app "$app"
+          cd "$app"
+          flutter pub add "particle_code:{\"path\":\"$GITHUB_WORKSPACE/flutter/particle_code\"}"
+          flutter build ios --release --no-codesign
+          grep -q "particle_code" ios/Podfile.lock \
+            || { echo "particle_code was not installed through CocoaPods"; exit 1; }
+          if grep -q "FlutterGeneratedPluginSwiftPackage" ios/Runner.xcodeproj/project.pbxproj; then
+            echo "unexpected SwiftPM integration in the CocoaPods app"; exit 1
+          fi
+          "$GITHUB_WORKSPACE/flutter/particle_code/example/tool/check_ios_symbols.sh" build/ios/iphoneos/Runner.app

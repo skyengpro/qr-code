@@ -28,8 +28,12 @@ flutter run            # on a phone: the simulator and emulator have no camera
 ```
 
 The iOS deployment target is 15.0, the lowest Flutter 3.47 accepts (it rewrites anything
-lower); the plugin itself supports iOS 13. The Release configuration sets
+lower), and the plugin's minimum too. The Release configuration sets
 `STRIP_STYLE = non-global` so the `pc_*` functions that only Dart calls survive stripping.
+
+On iOS the app builds through Swift Package Manager (Flutter's default) and has no Podfile: its
+Xcode project carries Flutter's SwiftPM integration. Apps still on CocoaPods use the plugin's
+podspec instead; CI covers that path by building a fresh app created with SwiftPM disabled.
 
 ## Tests
 

@@ -157,13 +157,16 @@ workspace root:
 
 ```sh
 scripts/build-android.sh          # libparticlecode_jni.so per ABI into android/.../jniLibs
-scripts/build-xcframework.sh      # ParticleCodeFFI.xcframework for iOS (needs Xcode)
+scripts/build-xcframework.sh --flutter   # ParticleCodeFFI.xcframework into ios/particle_code/Frameworks (needs Xcode)
 ```
 
 * Android: Dart opens `libparticlecode_jni.so`, which exports both the JNI scanner and the
   `pc_*` encoder C functions.
 * iOS: the xcframework is statically linked and its `pc_*` symbols are kept alive by the
-  plugin's `SymbolKeeper`; Dart uses `DynamicLibrary.process()`.
+  plugin's `SymbolKeeper`; Dart uses `DynamicLibrary.process()`. The plugin supports both
+  Swift Package Manager (`ios/particle_code/Package.swift`) and CocoaPods
+  (`ios/particle_code.podspec`); with SwiftPM, set the app's Release/Profile
+  `STRIP_STYLE = non-global` (see `ios/README.md`).
 * Desktop and tests: `$PARTICLECODE_LIB`, else the newest
   `target/{debug,release}/libparticlecode_ffi.{so,dylib}` found by searching upward from the
   working directory. Run `cargo build -p particlecode-ffi` first.
