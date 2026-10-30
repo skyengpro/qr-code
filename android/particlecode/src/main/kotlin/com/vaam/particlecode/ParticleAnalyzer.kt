@@ -76,6 +76,17 @@ class ParticleAnalyzer(
         fun onResult(result: ScanResult)
 
         /**
+         * Like [onResult], with the frame the result came from. [image] is valid **only during
+         * this call** (the analyzer closes it right after): read `image.imageInfo.rotationDegrees`
+         * and `image.imageInfo.sensorToBufferTransformMatrix` (copy the matrix) to map
+         * [ScanResult.anchors] onto a preview. The default forwards to [onResult], so existing
+         * listeners are unaffected; the analyzer calls only this overload.
+         */
+        fun onResult(result: ScanResult, image: ImageProxy) {
+            onResult(result)
+        }
+
+        /**
          * A frame could not be analyzed: unsupported image format, inconsistent buffers, a
          * closed scanner or a native failure. The analyzer keeps going unless the scanner is
          * closed.
@@ -115,7 +126,7 @@ class ParticleAnalyzer(
                 return
             }
             if (result.isDone) finished = true
-            if (shouldReport(result)) listener.onResult(result)
+            if (shouldReport(result)) listener.onResult(result, image)
         } finally {
             image.close()
         }
