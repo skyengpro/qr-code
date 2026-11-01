@@ -1,0 +1,68 @@
+name: Wasm
+
+# Builds particlecode-wasm for the browser (scripts/build-wasm.sh: wasm32-unknown-unknown +
+# the wasm-bindgen CLI at the version the workspace pins) and runs a Node smoke test over the
+# result. Separate from ci.yml because it needs the wasm target and a second toolchain piece.
+# The native unit and round-trip tests of the crate run in ci.yml with the rest of the workspace.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: wasm-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The one place the version is written is the workspace Cargo.toml; the script checks the
+      # CLI against it too, so a mismatch fails there even if this step were wrong.
+      - name: Read the wasm-bindgen pin
+        id: pin
+        run: echo "version=$(sed -n 's/^wasm-bindgen = "=\([0-9][0-9.]*\)".*$/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the wasm-bindgen CLI
+        id: cli
+        uses: actions/cache@v4
+        with:
+          path: ~/wasm-bindgen-cli
+          key: wasm-bindgen-cli-${{ steps.pin.outputs.version }}
+
+      - name: Install the wasm-bindgen CLI
+        if: steps.cli.outputs.cache-hit != 'true'
+        run: cargo install --locked wasm-bindgen-cli --version "${{ steps.pin.outputs.version }}" --root "$HOME/wasm-bindgen-cli"
+
+      - run: echo "$HOME/wasm-bindgen-cli/bin" >> "$GITHUB_PATH"
+
+      # The wasm-only code path (getrandom's wasm_js backend) is invisible to the native clippy job.
+      - run: cargo clippy --locked -p particlecode-wasm --target wasm32-unknown-unknown -- -D warnings
+
+      - run: scripts/build-wasm.sh "$RUNNER_TEMP/wasm-pkg"
+
+      - run: node crates/particlecode-wasm/tests/smoke.mjs "$RUNNER_TEMP/wasm-pkg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: particlecode-wasm
+          path: ${{ runner.temp }}/wasm-pkg
+          if-no-files-found: error
