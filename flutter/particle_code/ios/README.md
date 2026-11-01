@@ -13,14 +13,14 @@ aarch64-apple-ios-sim x86_64-apple-ios`):
 scripts/build-xcframework.sh --flutter     # from the repository root
 ```
 
-This builds `target/apple/ParticleCodeFFI.xcframework` and, because of `--flutter`, copies it to
+This builds `target/apple/ParticleCodeFFI.xcframework` (`$CARGO_TARGET_DIR/apple/...` when that is set) and, because of `--flutter`, copies it to
 `flutter/particle_code/ios/particle_code/Frameworks/` (git-ignored). The copy is needed because
 both a Swift package's binary target and a pod's vendored framework must live inside their own
 directory. Without `--flutter` run the script as usual and copy by hand:
 
 ```sh
 mkdir -p flutter/particle_code/ios/particle_code/Frameworks
-cp -R target/apple/ParticleCodeFFI.xcframework flutter/particle_code/ios/particle_code/Frameworks/
+cp -R "${CARGO_TARGET_DIR:-target}"/apple/ParticleCodeFFI.xcframework flutter/particle_code/ios/particle_code/Frameworks/
 ```
 
 Then `flutter build ios` in an app that depends on `particle_code`.
