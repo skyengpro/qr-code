@@ -19,6 +19,7 @@ crates/particlecode-render   FrameSpec -> pixels (tiny-skia), PNG/GIF/SVG packag
 crates/particlecode-shapes   shape tool (SVG path -> lattice bitmaps, checks, validate, shapes.bin)
 crates/particlecode-cli      `particlecode` binary + examples/
 crates/particlecode-ffi      flutter_rust_bridge-style API + C ABI
+crates/particlecode-wasm     browser sender: ParticleCanvas.tick -> RGBA for a <canvas> (wasm-bindgen)
 examples/                    runnable end-to-end examples (see examples/README.md)
 docs/                        spec, design notes, README images
 ```
