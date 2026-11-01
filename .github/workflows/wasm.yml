@@ -59,10 +59,6 @@ jobs:
 
       - run: scripts/build-wasm.sh "$RUNNER_TEMP/wasm-pkg"
 
+      # No artifact upload: consumers (the Vaam console) build the module from a pinned
+      # commit with this same script, so an uploaded copy would have no reader.
       - run: node crates/particlecode-wasm/tests/smoke.mjs "$RUNNER_TEMP/wasm-pkg"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: particlecode-wasm
-          path: ${{ runner.temp }}/wasm-pkg
-          if-no-files-found: error
