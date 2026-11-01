@@ -13,7 +13,7 @@ Pod::Spec.new do |s|
     ParticleCaptureScanner runs it on a serial queue behind AVCaptureVideoDataOutput.
   DESC
   s.homepage         = 'https://github.com/vaam-apps/qr-code'
-  s.license          = { :type => 'Proprietary' }
+  s.license          = { :type => 'MIT' }
   s.author           = { 'Stephane Segning' => 'stephane.segning@ssegning.com' }
   s.source           = { :path => '.' }
 

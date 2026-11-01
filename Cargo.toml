@@ -8,6 +8,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
 publish = false
+license = "MIT"
 repository = "https://github.com/vaam-apps/qr-code"
 authors = ["Stephane Segning <stephane.segning@ssegning.com>"]
 
