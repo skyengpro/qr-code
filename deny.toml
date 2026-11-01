@@ -32,7 +32,7 @@ allow = [
 ]
 
 [licenses.private]
-# Workspace crates are `publish = false` and carry no license field.
+# Workspace crates are `publish = false` (MIT, LICENSE); only dependencies are checked.
 ignore = true
 
 [bans]

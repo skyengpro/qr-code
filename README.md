@@ -220,3 +220,7 @@ cargo build -p particlecode-core --no-default-features   # core stays no_std
 
 The repo ships Claude Code skills in `.claude/skills/`: `rust-practices`,
 `cargo-workflow`, `cargo-deny` and `particlecode-format`. See [`CLAUDE.md`](CLAUDE.md).
+
+## License
+
+MIT, see [`LICENSE`](LICENSE).
