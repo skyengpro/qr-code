@@ -5,7 +5,7 @@ The scanner side for iOS (and macOS): the Rust decoder from `particlecode-ffi` a
 CocoaPods.
 
 ```
-scripts/build-xcframework.sh         builds target/apple/ParticleCodeFFI.xcframework (+ .zip)
+scripts/build-xcframework.sh         builds target/apple/ParticleCodeFFI.xcframework (+ .zip; $CARGO_TARGET_DIR/apple if set)
 apple/ParticleCodeKit/               Swift package: ParticleDecoder, ParticleCaptureScanner
 apple/ParticleCodeKit.podspec        the same sources for CocoaPods
 ```

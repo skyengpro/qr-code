@@ -38,19 +38,27 @@ The plugin's manifest declares `android.permission.CAMERA` and the optional feat
 permission is requested by the `requestPermission` method. `start` does not prompt: it fails with
 `permission_denied` when the permission is missing.
 
-## Preview and hybrid composition
+## Preview platform view
 
 `particle_code/preview` creates a CameraX `PreviewView` in `COMPATIBLE` mode, which renders through
-a `TextureView`. Use it with Flutter's hybrid composition (`PlatformViewLink` with
-`initSurfaceAndroidView` / `initExpensiveAndroidView`), not the old virtual display mode:
+a `TextureView`. On the Dart side `lib/src/scanner/preview.dart` embeds it with Flutter's
+`AndroidView`, not with a `PlatformViewLink` / `initSurfaceAndroidView` hybrid-composition setup.
+`AndroidView` leaves the choice of embedding mode to Flutter and the device, so which mode is in
+effect has not been checked here.
 
-* The native view lives in the Android view hierarchy and Flutter composites it with its own
-  surface. Flutter widgets (the dot overlay, buttons) can be drawn on top of it.
+**Unverified on a device:** nothing in this repository's CI renders the preview, so the properties
+below are what the `COMPATIBLE` mode is designed to give, not something measured with `AndroidView`:
+
+* Flutter widgets (the dot overlay, buttons) can be drawn on top of the preview.
 * `COMPATIBLE` avoids the `SurfaceView` hole-punching of the default `PERFORMANCE` mode, which
   breaks when the view is clipped, transformed or overlapped. It is also the mode in which the
-  anchor coordinate mapping is exact.
+  anchor coordinate mapping is meant to be exact.
 * The cost is a little more GPU work and latency than a `SurfaceView`. The preview is only for the
   user's eyes; decoding does not use it.
+
+Check the preview, overlay alignment and tap-to-focus on a real device before relying on any of it;
+if `AndroidView` turns out not to composite correctly, switch `preview.dart` to
+`PlatformViewLink` with `initSurfaceAndroidView` and update this section.
 
 The view can be created before or after `start`: the camera's `Preview` renders into the newest
 view that exists, and moves to another one when the first is disposed. A tap on the preview

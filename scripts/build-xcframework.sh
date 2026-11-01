@@ -7,9 +7,9 @@
 #
 #   scripts/build-xcframework.sh [--macos] [--no-zip] [--debug-info] [--flutter]
 #
-# Output:
-#   target/apple/ParticleCodeFFI.xcframework          the framework
-#   target/apple/ParticleCodeFFI.xcframework.zip      for a remote SwiftPM binaryTarget
+# Output (<target> is ${CARGO_TARGET_DIR:-target}):
+#   <target>/apple/ParticleCodeFFI.xcframework        the framework
+#   <target>/apple/ParticleCodeFFI.xcframework.zip    for a remote SwiftPM binaryTarget
 #   apple/ParticleCodeKit/Frameworks/...xcframework   copy the Swift package and podspec use
 #                                                     (SwiftPM requires binary targets inside
 #                                                     the package; the copy is git-ignored)
@@ -21,6 +21,7 @@
 #   IPHONEOS_DEPLOYMENT_TARGET   iOS minimum (default 13.0)
 #   MACOSX_DEPLOYMENT_TARGET     macOS minimum (default 11.0)
 #   CARGO_FLAGS                  extra flags for cargo (default: --locked)
+#   CARGO_TARGET_DIR             cargo's build directory (default: target in the repo root)
 set -euo pipefail
 
 usage() {
@@ -58,6 +59,11 @@ for tool in cargo rustup lipo xcodebuild strip ditto swift; do
         exit 1
     fi
 done
+
+# Where cargo puts its output; made absolute so every path below agrees with cargo.
+TARGET_DIR="${CARGO_TARGET_DIR:-target}"
+mkdir -p "$TARGET_DIR"
+TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
 
 export IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-13.0}"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
@@ -97,7 +103,7 @@ if [ -n "$MISSING" ]; then
     exit 1
 fi
 
-OUT="$ROOT/target/apple"
+OUT="$TARGET_DIR/apple"
 STAGE="$OUT/stage"
 XCF="$OUT/ParticleCodeFFI.xcframework"
 LIB=libparticlecode_ffi.a
@@ -111,8 +117,8 @@ for t in $TARGETS; do
     echo "==> cargo build ($t)"
     # shellcheck disable=SC2086 # CARGO_FLAGS is a word list on purpose
     cargo rustc $CARGO_FLAGS -p particlecode-ffi --lib --release --target "$t" --crate-type staticlib
-    if [ ! -f "target/$t/release/$LIB" ]; then
-        echo "error: target/$t/release/$LIB was not produced" >&2
+    if [ ! -f "$TARGET_DIR/$t/release/$LIB" ]; then
+        echo "error: $TARGET_DIR/$t/release/$LIB was not produced" >&2
         exit 1
     fi
 done
@@ -134,11 +140,11 @@ merge() { # merge <out-dir> <lib>...
     lipo -create "$@" -output "$dir/$LIB"
 }
 
-merge "$STAGE/ios-sim" "target/$IOS_SIM_ARM/release/$LIB" "target/$IOS_SIM_X86/release/$LIB"
+merge "$STAGE/ios-sim" "$TARGET_DIR/$IOS_SIM_ARM/release/$LIB" "$TARGET_DIR/$IOS_SIM_X86/release/$LIB"
 mkdir -p "$STAGE/ios"
-cp "target/$IOS_DEVICE/release/$LIB" "$STAGE/ios/$LIB"
+cp "$TARGET_DIR/$IOS_DEVICE/release/$LIB" "$STAGE/ios/$LIB"
 if [ "$WITH_MACOS" -eq 1 ]; then
-    merge "$STAGE/macos" "target/$MAC_ARM/release/$LIB" "target/$MAC_X86/release/$LIB"
+    merge "$STAGE/macos" "$TARGET_DIR/$MAC_ARM/release/$LIB" "$TARGET_DIR/$MAC_X86/release/$LIB"
 fi
 
 # Remove leftover debug symbols from the archives. Failure is not fatal: the library works
@@ -190,7 +196,7 @@ fi
 echo
 echo "Static library per target, as built:"
 for t in $TARGETS; do
-    printf '  %-24s %s\n' "$t" "$(du -h "target/$t/release/$LIB" | cut -f1)"
+    printf '  %-24s %s\n' "$t" "$(du -h "$TARGET_DIR/$t/release/$LIB" | cut -f1)"
 done
 echo "Slices in the xcframework:"
 for lib in "$XCF"/*/"$LIB"; do

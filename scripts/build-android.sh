@@ -4,6 +4,7 @@
 #   scripts/build-android.sh            release build (what the AAR ships)
 #   scripts/build-android.sh --debug    debug build, faster to compile
 #
+# Honours CARGO_TARGET_DIR (cargo-ndk passes it to cargo; nothing here reads target/).
 # Needs: Rust (rustup), cargo-ndk (`cargo install --locked cargo-ndk`) and an Android NDK.
 # The NDK is taken from ANDROID_NDK_HOME, ANDROID_NDK_ROOT, ANDROID_NDK_LATEST_HOME (set on
 # GitHub's ubuntu runners) or the newest $ANDROID_HOME/ndk/<version>.
@@ -23,7 +24,7 @@ case "${1:-}" in
     "") ;;
     --debug) profile_flag=() ;;
     -h | --help)
-        sed -n '2,10p' "$0"
+        sed -n '2,11p' "$0"
         exit 0
         ;;
     *) die "unknown argument '$1' (try --debug or --help)" ;;
@@ -78,7 +79,7 @@ done
 cd "$repo_root"
 rm -rf "$out_dir"
 cargo ndk "${ndk_args[@]}" --platform "$MIN_API" -o "$out_dir" \
-    build -p particlecode-jni ${profile_flag[@]+"${profile_flag[@]}"}
+    build --locked -p particlecode-jni ${profile_flag[@]+"${profile_flag[@]}"}
 
 echo
 echo "Built:"

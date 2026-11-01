@@ -84,6 +84,7 @@ crates/particlecode-shapes   shape tool: SVG path -> lattice bitmaps, rule check
 crates/particlecode-cli      the `particlecode` command
 crates/particlecode-ffi      flutter_rust_bridge-style API and a C ABI for the Flutter and Tauri apps
 crates/particlecode-jni      Android JNI shim over the decoder (CameraX buffers read in place)
+crates/particlecode-wasm     browser sender: payload -> animated RGBA frames for a <canvas> (wasm-bindgen); scripts/build-wasm.sh
 android/                     Kotlin wrapper + CameraX analyzer (library module); scripts/build-android.sh
 apple/                       ParticleCodeKit Swift package + podspec over ParticleCodeFFI.xcframework; scripts/build-xcframework.sh
 flutter/particle_code/       Flutter plugin (sender in Dart over dart:ffi, scanner on the native pipelines) + example app
@@ -165,6 +166,45 @@ Build the native libraries first (`scripts/build-android.sh`, `scripts/build-xcf
 [example app](flutter/particle_code/example) has a Send tab (sample ticket and credential or free
 text, profile, shape, mood) and a Scan tab (camera, progress, result sheet), and
 `.github/workflows/flutter.yml` builds it for Android and iOS on every pull request.
+
+## Web
+
+[`crates/particlecode-wasm`](crates/particlecode-wasm) draws the animated code in a browser
+`<canvas>`, so a page can show a code that the Flutter scanner reads. It is the Flutter
+`ParticleCodeView` ported to Rust: the same frame schedule (data frame from elapsed time, 40 ms
+cross-fade, the liveness second from the wall clock) over `particlecode_render::render_animated`,
+so the pixels come from the one painter. Rust owns the clocks and the cross-fade; the page owns
+the timer and only blits.
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install --locked wasm-bindgen-cli --version <the pin in Cargo.toml>   # exact match required
+scripts/build-wasm.sh out          # out/particlecode_wasm.js + out/particlecode_wasm_bg.wasm (~675 KB)
+node crates/particlecode-wasm/tests/smoke.mjs out
+```
+
+```js
+import { initSync, ParticleCanvas, wasm_memory } from "./out/particlecode_wasm.js";
+initSync({ module: wasmBytes }); // or: await init() to fetch particlecode_wasm_bg.wasm
+
+// payload bytes, profile "s" | "m" | "l", data frames per second, Unix seconds of frame 0, animated?
+const code = new ParticleCanvas(payload, "s", 10, Date.now() / 1000, true);
+const t0 = performance.now();
+function frame() {
+  const size = canvas.width; // square, in pixels
+  if (code.tick(performance.now() - t0, Date.now(), size)) {
+    const px = new Uint8ClampedArray(wasm_memory().buffer, code.pixels_ptr(), code.pixels_len());
+    ctx.putImageData(new ImageData(px, size, size), 0, 0); // zero-copy; re-read the pointer every time
+  }
+  requestAnimationFrame(frame);
+}
+frame();
+```
+
+`tick` returns `false` when nothing changed (a static code between data frames), so a page can skip the
+blit. A profile S frame at 656 px costs about 13 ms in Node, profile M about twice that; draw at no more
+than 30 fps and stop the loop while the tab is hidden. Pass `motion = false` for a static code (for
+`prefers-reduced-motion`). `code.free()` releases the session.
 
 ## Development
 

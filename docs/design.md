@@ -158,6 +158,33 @@ The spec's pipeline, with these refinements (details in `particlecode-vision`'s 
   `std` feature. Consequence: a host-target `--no-default-features` build still compiles
   raptorq with `std`. The real `no_std` guarantee is the bare-metal `thumbv7em` CI build.
 
+## Browser sender (`particlecode-wasm`)
+
+* The operator console draws the code in a `<canvas>`, so the web needs the sender but not the
+  decoder. `particlecode-wasm` is `particlecode-core` + `particlecode-render` behind
+  `wasm-bindgen`; it adds no format, so there is no `FORMAT_VERSION` change. Geometry and
+  palette still come only from core and `render`.
+* **Rust owns the clocks.** `ParticleCanvas::tick(elapsed_ms, now_unix_ms, size_px)` ports
+  `ParticleCodeView._onTick`: data frame `floor(elapsed * fps / 1000)` (from time, never from
+  the number of paints), the previous frame kept for the 40 ms cross-fade
+  (`t_since_switch = t - index / fps`, no cross-fade without a previous frame), ripple and
+  reveal as `render_animated` already derives them, and the liveness second from the
+  wall-clock argument at the moment a frame is fetched. JavaScript supplies the timer and the
+  clock readings and blits; nothing in the crate calls `SystemTime::now()`, which panics on
+  `wasm32-unknown-unknown`. The session is `Session::with_identity` with a random id and key
+  (getrandom's `wasm_js` backend, enabled on that target only) and the caller's clock origin.
+* The painter returns a fresh `Pixmap` per call (tiny-skia owns it); `tick` copies it into one
+  persistent RGBA buffer so a page keeps a single `Uint8ClampedArray` view over wasm memory
+  (`pixels_ptr`/`pixels_len`; reading the address is safe Rust, only the view lives in JS).
+  The background is opaque, so premultiplied and straight alpha are the same bytes.
+  `motion = false` paints `render` (no drift, no cross-fade) and repaints only when the data
+  frame or the size changes; `tick` returns whether pixels changed.
+* Build: `scripts/build-wasm.sh` (`--profile release-wasm`, `opt-level = 2`; measured, `s` gave a
+  794 KB module and 23 ms per profile S tick at 656 px, 2 gave 675 KB and 13 ms) then `wasm-bindgen --target web`. `wasm-bindgen` is pinned exactly in the workspace
+  and the script refuses a CLI of another version. CI builds it and runs a Node smoke test
+  (`.github/workflows/wasm.yml`); the native tests render through `tick` and decode the pixels
+  with `ParticleDecoder::feed_rgba` (a 6-digit code and a 253-byte JSON payload, profile S).
+
 ## Not implemented in v1
 
 * 8-hue palette (header bit reserved; encoder and receiver reject it).

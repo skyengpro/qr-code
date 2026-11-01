@@ -53,8 +53,9 @@ private class PreviewPlatformView(context: Context, private val registry: Previe
     private val previewView = PreviewView(context)
 
     init {
-        // COMPATIBLE renders through a TextureView. Flutter's hybrid composition embeds the native
-        // view into its own view hierarchy and composites it with the Flutter surface; a
+        // COMPATIBLE renders through a TextureView. When Flutter embeds the native view into its own
+        // view hierarchy and composites it with the Flutter surface (Dart uses AndroidView, so the
+        // exact mode is the engine's choice; see android/README.md), a
         // SurfaceView (PERFORMANCE mode) punches a hole in the window and misbehaves when it is
         // clipped, transformed or overlapped by Flutter widgets, which is exactly what an overlay
         // on the scanner does. COMPATIBLE is also the mode in which PreviewView's coordinate
