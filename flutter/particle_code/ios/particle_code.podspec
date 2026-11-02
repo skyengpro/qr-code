@@ -11,7 +11,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'particle_code'
-  s.version          = '0.1.0'
+  s.version          = '0.2.0'
   s.summary          = 'Particle Code for Flutter: show payloads as animated dots, scan them with the camera.'
   s.description      = <<-DESC
     Native iOS side of the particle_code plugin: an AVFoundation scanner that feeds camera

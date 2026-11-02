@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
+* Swift Package Manager support on iOS, beside CocoaPods: the plugin builds through
+  `ios/particle_code/Package.swift` when the app uses SwiftPM (#4).
+* Licensed under MIT (#6).
 * `ParticleCodeView` builds frames on a background isolate (`useBackgroundIsolate`, on by
   default): prefetch two frames ahead, liveness second predicted from the data clock,
   synchronous fallback, disposed with the view.
