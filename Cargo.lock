@@ -579,7 +579,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "particlecode-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -594,7 +594,7 @@ dependencies = [
 
 [[package]]
 name = "particlecode-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "getrandom",
  "hmac",
@@ -608,7 +608,7 @@ dependencies = [
 
 [[package]]
 name = "particlecode-ffi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "particlecode-core",
  "particlecode-render",
@@ -620,7 +620,7 @@ dependencies = [
 
 [[package]]
 name = "particlecode-jni"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "jni",
  "particlecode-core",
@@ -631,7 +631,7 @@ dependencies = [
 
 [[package]]
 name = "particlecode-render"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gif",
  "particlecode-core",
@@ -644,7 +644,7 @@ dependencies = [
 
 [[package]]
 name = "particlecode-shapes"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -657,7 +657,7 @@ dependencies = [
 
 [[package]]
 name = "particlecode-vision"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "particlecode-core",
  "particlecode-render",
@@ -667,7 +667,7 @@ dependencies = [
 
 [[package]]
 name = "particlecode-wasm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "getrandom",
  "particlecode-core",

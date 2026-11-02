@@ -5,7 +5,7 @@
 # apple/ParticleCodeKit/Frameworks/, the path used below).
 Pod::Spec.new do |s|
   s.name             = 'ParticleCodeKit'
-  s.version          = '0.1.0'
+  s.version          = '0.2.0'
   s.summary          = 'Particle Code scanner: camera frames to payload, decoded in Rust.'
   s.description      = <<-DESC
     Swift wrapper around the particlecode-ffi static library (a Rust decoder for the animated
