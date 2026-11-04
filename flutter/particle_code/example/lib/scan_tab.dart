@@ -28,6 +28,7 @@ class _ScanTabState extends State<ScanTab> {
   int _received = 0;
   bool _torch = false;
   bool _sheetOpen = false;
+  bool _resetting = false;
 
   @override
   void initState() {
@@ -108,12 +109,27 @@ class _ScanTabState extends State<ScanTab> {
     _sheetOpen = false;
     if (!mounted) return;
     // Closing the sheet in any way means "scan again".
-    await _scanner.reset();
-    if (mounted) {
+    await _resetScan();
+  }
+
+  Future<void> _resetScan() async {
+    if (_resetting) return;
+    setState(() => _resetting = true);
+    try {
+      await _scanner.reset();
+      if (!mounted) return;
       setState(() {
         _frame = null;
         _received = 0;
       });
+    } on ParticleScannerException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not reset scan: ${e.message}')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _resetting = false);
     }
   }
 
@@ -173,7 +189,11 @@ class _ScanTabState extends State<ScanTab> {
             left: 16,
             right: 16,
             bottom: 16,
-            child: _ProgressPanel(frame: _frame, received: _received),
+            child: _ProgressPanel(
+              frame: _frame,
+              received: _received,
+              onReset: _resetting ? null : _resetScan,
+            ),
           ),
         ],
       ),
@@ -209,10 +229,15 @@ class _HintPill extends StatelessWidget {
 }
 
 class _ProgressPanel extends StatelessWidget {
-  const _ProgressPanel({required this.frame, required this.received});
+  const _ProgressPanel({
+    required this.frame,
+    required this.received,
+    required this.onReset,
+  });
 
   final ScanFrame? frame;
   final int received;
+  final VoidCallback? onReset;
 
   @override
   Widget build(BuildContext context) {
@@ -254,6 +279,12 @@ class _ProgressPanel extends StatelessWidget {
                   ),
                 ],
               ),
+            ),
+            TextButton.icon(
+              key: const Key('reset-scan'),
+              onPressed: onReset,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('Reset'),
             ),
           ],
         ),

@@ -497,7 +497,7 @@ impl Session {
         FrameSpec::assemble(i, header, &header.encode(), &self.order, &body, sectors)
     }
 
-    /// Whiten, Reed-Solomon protect, interleave and map one symbol to `order.len()` dot
+    /// Reed-Solomon protect, interleave, whiten and map one symbol to `order.len()` dot
     /// symbols (`BodyCodec::encode` with `WhitenKey { session_id, segment_index,
     /// packet_seed }`).
     fn encode_body(&self, header: &Header, block: &[u8]) -> Vec<u8> {

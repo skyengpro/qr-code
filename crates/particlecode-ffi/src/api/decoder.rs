@@ -405,6 +405,45 @@ mod tests {
     }
 
     #[test]
+    fn mixed_header_and_body_are_rejected_without_losing_progress() {
+        use crate::api::dto::{ProfileDto, ShapeChoiceDto};
+        let data = payload(6000);
+        let enc = ParticleEncoder::new(
+            data.clone(),
+            EncoderConfig {
+                shape: ShapeChoiceDto::Require { id: 30 },
+                profile: Some(ProfileDto::S),
+                ..EncoderConfig::default()
+            },
+        )
+        .unwrap();
+        let mut dec = ParticleDecoder::new();
+        assert!(matches!(
+            dec.feed_symbols(symbols_of(&enc, 0), Vec::new()),
+            ProgressDto::Accepted { have: 1, .. }
+        ));
+        let mut mixed = symbols_of(&enc, 1);
+        let next = symbols_of(&enc, 2);
+        mixed[48..].copy_from_slice(&next[48..]);
+        assert!(matches!(
+            dec.feed_symbols(mixed, Vec::new()),
+            ProgressDto::Rejected { .. }
+        ));
+        for i in 1..enc.frames_per_pass() * 3 {
+            let progress = dec.feed_symbols(symbols_of(&enc, i), Vec::new());
+            match progress {
+                ProgressDto::Done { payload } => {
+                    assert_eq!(payload, data);
+                    return;
+                }
+                ProgressDto::Accepted { have, .. } => assert!(have >= 1),
+                ProgressDto::Rejected { reason } => panic!("frame {i} rejected: {reason}"),
+            }
+        }
+        panic!("transfer did not complete");
+    }
+
+    #[test]
     fn malformed_input_is_rejected_not_panicked() {
         let mut dec = ParticleDecoder::new();
         for (syms, conf) in [

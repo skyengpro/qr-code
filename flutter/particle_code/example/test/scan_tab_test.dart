@@ -163,6 +163,32 @@ void main() {
       expect(find.text('Received 2.0 KB'), findsOneWidget);
     });
 
+    scanTest('reset clears scan progress and accepts a new transfer', (
+      tester,
+    ) async {
+      final platform = _FakePlatform()..install();
+      await _pumpTab(tester);
+      await platform.send(tester, _frame(hint: 'Hold steady'));
+      await platform.send(tester, {
+        'type': 'segment',
+        'bytes': Uint8List(1500),
+      });
+      expect(find.text('25%'), findsOneWidget);
+      expect(find.text('Received 1.5 KB'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('reset-scan')));
+      await tester.pump();
+      await tester.pump();
+      expect(platform.methods.last, 'reset');
+      expect(find.text('0%'), findsOneWidget);
+      expect(find.text('Received 0 B'), findsOneWidget);
+      expect(find.text('Waiting for the first segment'), findsOneWidget);
+      expect(find.text('Point the camera at a Particle Code'), findsOneWidget);
+
+      await platform.send(tester, _frame(have: 2, need: 4));
+      expect(find.text('50%'), findsOneWidget);
+    });
+
     scanTest('torch toggles through the platform', (tester) async {
       final platform = _FakePlatform()..install();
       await _pumpTab(tester);

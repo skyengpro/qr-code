@@ -37,7 +37,7 @@ that the decoder locks onto are the same in every shape.
 | Geometry | Hex lattice in pitch units. 3 hero anchors at −90°/30°/150° plus a center anchor. Each hero anchor has a halo of 16 calibration swatches and 16 header dots. Particles orbit outside all ink. | `core::layout` |
 | Symbols | 4 hues × 2 sizes = 3 bits per dot. The receiver calibrates the hues from the swatches in every frame. | `core::symbol`, `core::profile` |
 | Header | 96 bits (session, profile, shape, segment, packet seed, …) in RS(24,16) over GF(64), on the 48 halo dots | `core::header`, `core::rs` |
-| Body | One RaptorQ symbol per frame. It is whitened, split into RS(255,191) codewords (RS(255,159) for print) and interleaved across the field. | `core::body` |
+| Body | One RaptorQ symbol per frame. It is split into RS(255,191) codewords (RS(255,159) for print), interleaved and whitened across the field. | `core::body` |
 | Fountain | The payload is cut into segments (8 KiB by default), each a RaptorQ block with its own CRC-32. Each pass sends K + 2 packets per segment. | `core::session`, `core::receiver` |
 | Liveness | The 6 particle angles carry the packet seed and a rolling HMAC of the session key and the current second | `core::liveness` |
 | Motion | Breathing wave, flow field, ripple, heartbeat, trails, reveal, cross-fade. These are pure functions of time and seed, kept inside the decoder's sampling budget. | `core::motion` |
@@ -45,9 +45,9 @@ that the decoder locks onto are the same in every shape.
 
 | Profile | Dots across | Disc dots | Bytes / frame | 6 KB payload |
 | --- | --- | --- | --- | --- |
-| S | 48 | 1,821 | 510 | 13 + 2 frames |
-| M (default) | 72 | 4,410 | 1,233 | 5 + 2 frames |
-| L | 96 | 8,076 | 2,260 | 3 + 2 frames |
+| S | 48 | 1,821 | 506 | 13 + 2 frames |
+| M (default) | 72 | 4,410 | 1,229 | 5 + 2 frames |
+| L | 96 | 8,076 | 2,256 | 3 + 2 frames |
 
 At profile M and 10 fps that is about 12 KB/s. A 6 KB COSE_Sign1 transfers in half a second
 of clean frames. `cargo pc info` prints the exact numbers for every shape.

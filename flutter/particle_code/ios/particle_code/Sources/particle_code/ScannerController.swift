@@ -292,6 +292,9 @@ final class ScannerController {
         case .rejected(let reason):
             status = "rejected"
             rejectReason = reason
+            if reason.contains("failed its CRC-32") || reason == "payload CRC-32 mismatch" {
+                NSLog("Particle Code scan reset: %@ (progress %ld/%ld)", reason, progress.have, progress.need)
+            }
         case .accepted(let have, let need, let segmentsDone, let segmentsTotal):
             status = "accepted"
             progress = Counts(
@@ -325,6 +328,7 @@ final class ScannerController {
 
         if result.error == .internalPanic {
             // The decoder asked to be discarded; start over with a fresh one.
+            NSLog("Particle Code scan reset: decoder encountered an internal error (progress %ld/%ld)", progress.have, progress.need)
             reset()
         }
     }
