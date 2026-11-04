@@ -52,7 +52,7 @@ A dot symbol is `color << 1 | size` (3 bits). Bytes are packed into symbols MSB-
 ## Header
 
 96 bits in spec order (see `header.rs`), CRC-8/SMBUS over the first 11 bytes.
-`version` = format version (2 high bits, currently 0) ‖ shape table version (2 low bits).
+`version` = format version (2 high bits, currently 2) ‖ shape table version (2 low bits).
 
 **Spec correction:** RS(48,32) over GF(8) does not exist (GF(8) RS codes have length ≤ 7).
 We use **RS(24,16) over GF(2⁶)** — same 48 dots, same 96 data bits. Code symbol `i` →
@@ -63,11 +63,17 @@ is 8 erasures, which the code still corrects. Guaranteed: 4 symbol errors (4–8
 ## Body
 
 * One RaptorQ encoding symbol of `T` bytes per frame, `T` = `BodyCodec::block_size()`,
-  a pure function of (dot count, ECC level).
-* **Whitening (addition to the spec):** the `T` bytes are XORed with a keystream seeded
-  by (session id, segment index, packet seed) before RS. Without it, CBOR zero runs and
-  RaptorQ's systematic source symbols make large single-color regions, which both look bad
-  and starve the neighbour-relative size classifier.
+  a pure function of (dot count, ECC level). Format version 2 reserves four RS data bytes
+  for CRC-32 over the big-endian session id, segment index, packet seed and packet bytes;
+  a failed packet is rejected before it can contaminate a segment. Tiny synthetic layouts
+  with fewer than four RS data bytes use the corresponding prefix of the checksum.
+* **Whitening (addition to the spec):** the interleaved RS bytes are XORed with a keystream
+  seeded by (session id, segment index, packet seed). This avoids large single-color regions
+  and makes an old body paired with a new header fail RS decoding in normal conditions.
+  The released version 0 whitened before RS and could accept such a mixed frame, resetting
+  a whole segment when its CRC finally failed. An intermediate version 1 was used during
+  local testing; the released cutover is directly from version 0 to version 2. This is
+  error detection, not cryptographic authentication.
 * `B = ⌊3·dots / 8⌋` coded bytes are split into `C = ⌈B / 255⌉` codewords of near-equal
   length; each codeword of length `n` carries `⌈n · parity₂₅₅ / 255⌉` parity bytes
   (64 → RS(255,191) for animated frames, 96 → RS(255,159) for static frames).

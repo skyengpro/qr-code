@@ -94,6 +94,51 @@ fn rgba_completes_a_session() {
 }
 
 #[test]
+fn ring_credential_completes_over_multiple_passes_with_missed_frames() {
+    use crate::api::dto::{EncoderConfig, ShapeChoiceDto};
+    use crate::api::encoder::ParticleEncoder;
+
+    let data = payload(6000);
+    let enc = ParticleEncoder::new(
+        data.clone(),
+        EncoderConfig {
+            shape: ShapeChoiceDto::Require { id: 30 },
+            profile: Some(ProfileDto::S),
+            session_id: Some(0xC0DE),
+            key: Some(vec![3; 32]),
+            clock_origin_unix: Some(1_700_000_000),
+            ..EncoderConfig::default()
+        },
+    )
+    .unwrap();
+    let mut dec = ParticleDecoder::new();
+    let mut previous_have = 0;
+    for i in 0..enc.frames_per_pass() * 5 {
+        if i % 3 == 1 {
+            continue;
+        }
+        let img = camera_rgb(&enc, i, SIZE_PX);
+        let result = dec.feed_rgba(img.width, img.height, rgba(&img));
+        match result.progress {
+            ProgressDto::Done { payload } => {
+                assert!(
+                    i >= enc.frames_per_pass(),
+                    "test must cross a pass boundary"
+                );
+                assert_eq!(payload, data);
+                return;
+            }
+            ProgressDto::Rejected { reason } => panic!("frame {i} rejected: {reason}"),
+            ProgressDto::Accepted { have, .. } => {
+                assert!(have >= previous_have, "progress fell on frame {i}");
+                previous_have = have;
+            }
+        }
+    }
+    panic!("ring transfer did not complete");
+}
+
+#[test]
 fn unusable_frames_are_rejections_with_hints() {
     let mut dec = ParticleDecoder::new();
     let grey = vec![128u8; 300 * 200];

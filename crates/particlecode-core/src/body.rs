@@ -1,16 +1,16 @@
-//! The dot-field body: one `RaptorQ` encoding symbol per frame, whitened, cut into
-//! Reed-Solomon codewords over GF(2⁸), interleaved, and mapped to 3-bit dot symbols.
+//! The dot-field body: one `RaptorQ` encoding symbol per frame, cut into Reed-Solomon
+//! codewords over GF(2⁸), interleaved, whitened, and mapped to 3-bit dot symbols.
 //!
 //! Layout for `dots` payload dots (see `docs/design.md`, "Body"):
 //!
 //! * `B = ⌊3·dots / 8⌋` coded bytes, `C = ⌈B / 255⌉` codewords of near-equal length (the first
 //!   `B mod C` are one byte longer). A codeword of length `n` has `⌈n · parity₂₅₅ / 255⌉`
 //!   parity bytes.
-//! * The block size `T` is the total number of data bytes, a pure function of
-//!   `(dots, ecc)`.
-//! * The `T` data bytes are XOR-ed with a keystream ([`WhitenKey`]) before RS encoding.
+//! * Four bytes of RS data hold a CRC-32 of the packet and its header identity; the rest
+//!   is the block size `T`, a pure function of `(dots, ecc)`.
 //! * Byte `j` of codeword `c` goes to stream position `j·C + c`; holes left by shorter
-//!   codewords are skipped. The stream is cut into 3-bit symbols MSB-first. Spare bits of the
+//!   codewords are skipped. The stream is XOR-ed with a keystream ([`WhitenKey`]) and cut
+//!   into 3-bit symbols MSB-first. Spare bits of the
 //!   last stream symbol and any leftover dots (at most two) are filled from the keystream so
 //!   they look random; the decoder ignores them.
 
@@ -88,6 +88,7 @@ pub struct BodyCodec {
     ecc: EccLevel,
     coded_bytes: usize,
     block_size: usize,
+    checksum_bytes: usize,
     /// One code per codeword, in codeword order.
     codes: Vec<ReedSolomon>,
 }
@@ -112,11 +113,16 @@ impl BodyCodec {
                 codes.push(code);
             }
         }
+        // Tiny synthetic layouts can hold fewer than four RS data bytes. Real shapes have
+        // room for the full checksum; use its prefix for these degenerate layouts.
+        let checksum_bytes = block_size.min(4);
+        block_size -= checksum_bytes;
         BodyCodec {
             dots,
             ecc,
             coded_bytes,
             block_size,
+            checksum_bytes,
             codes,
         }
     }
@@ -182,18 +188,19 @@ impl BodyCodec {
             "body data must be block_size() bytes"
         );
         let mut ks = Keystream::new(key);
-        let whitened: Vec<u8> = data.iter().map(|&b| b ^ ks.next_byte()).collect();
-
+        let mut protected = Vec::with_capacity(self.block_size + self.checksum_bytes);
+        protected.extend_from_slice(data);
+        protected.extend_from_slice(&packet_checksum(data, key)[..self.checksum_bytes]);
         let mut words = Vec::with_capacity(self.codes.len());
         let mut at = 0;
         for code in &self.codes {
-            words.push(code.encode(&whitened[at..at + code.k()]));
+            words.push(code.encode(&protected[at..at + code.k()]));
             at += code.k();
         }
         let stream: Vec<u8> = self
             .interleave_order()
             .into_iter()
-            .map(|(c, j)| words[c][j])
+            .map(|(c, j)| words[c][j] ^ ks.next_byte())
             .collect();
 
         let used = self.stream_symbols();
@@ -234,10 +241,11 @@ impl BodyCodec {
                 .unwrap_or(0)
         };
 
+        let mut ks = Keystream::new(key);
         let mut words: Vec<Vec<u8>> = self.codes.iter().map(|c| vec![0u8; c.n()]).collect();
         let mut conf: Vec<Vec<u8>> = self.codes.iter().map(|c| vec![255u8; c.n()]).collect();
         for (p, (c, j)) in self.interleave_order().into_iter().enumerate() {
-            words[c][j] = bytes[p];
+            words[c][j] = bytes[p] ^ ks.next_byte();
             conf[c][j] = confidence(p);
         }
 
@@ -261,12 +269,22 @@ impl BodyCodec {
             data.extend_from_slice(&word[..code.k()]);
         }
 
-        let mut ks = Keystream::new(key);
-        for b in &mut data {
-            *b ^= ks.next_byte();
+        let (packet, checksum) = data.split_at(self.block_size);
+        if checksum != &packet_checksum(packet, key)[..self.checksum_bytes] {
+            return Err(DecodeError::PacketCrc);
         }
+        data.truncate(self.block_size);
         Ok(data)
     }
+}
+
+fn packet_checksum(data: &[u8], key: WhitenKey) -> [u8; 4] {
+    let mut framed = Vec::with_capacity(6 + data.len());
+    framed.extend_from_slice(&key.session_id.to_be_bytes());
+    framed.extend_from_slice(&key.segment_index.to_be_bytes());
+    framed.extend_from_slice(&key.packet_seed.to_be_bytes());
+    framed.extend_from_slice(data);
+    crate::crc::crc32(&framed).to_be_bytes()
 }
 
 #[cfg(test)]
@@ -319,12 +337,12 @@ mod tests {
     fn layout_numbers() {
         // dots, ecc, coded bytes B, codewords C, block size T
         let cases = [
-            (2000, EccLevel::Normal, 750, 3, 561),
-            (2000, EccLevel::High, 750, 3, 465),
-            (4466, EccLevel::Normal, 1674, 7, 1253),
-            (8000, EccLevel::Normal, 3000, 12, 2244),
-            (4466, EccLevel::High, 1674, 7, 1043),
-            (8000, EccLevel::High, 3000, 12, 1860),
+            (2000, EccLevel::Normal, 750, 3, 557),
+            (2000, EccLevel::High, 750, 3, 461),
+            (4466, EccLevel::Normal, 1674, 7, 1249),
+            (8000, EccLevel::Normal, 3000, 12, 2240),
+            (4466, EccLevel::High, 1674, 7, 1039),
+            (8000, EccLevel::High, 3000, 12, 1856),
         ];
         for (dots, ecc, b, c, t) in cases {
             let codec = BodyCodec::new(dots, ecc);
@@ -340,9 +358,9 @@ mod tests {
     #[test]
     fn full_size_codeword_is_rs_255_191_and_159() {
         let normal = BodyCodec::new(680, EccLevel::Normal); // B = 255
-        assert_eq!((normal.codeword_count(), normal.block_size()), (1, 191));
+        assert_eq!((normal.codeword_count(), normal.block_size()), (1, 187));
         let high = BodyCodec::new(680, EccLevel::High);
-        assert_eq!(high.block_size(), 159);
+        assert_eq!(high.block_size(), 155);
     }
 
     #[test]
@@ -397,8 +415,11 @@ mod tests {
                 .all(|&h| h > expect * 3 / 4 && h < expect * 5 / 4),
             "{hist:?}"
         );
-        // Decoding with the wrong key gives garbage, not the payload.
-        assert_ne!(codec.decode(&certain(&a), key(2)).unwrap(), zeros);
+        // A body paired with another packet's header must fail before reaching RaptorQ.
+        assert_eq!(
+            codec.decode(&certain(&a), key(2)),
+            Err(DecodeError::Uncorrectable)
+        );
     }
 
     #[test]
@@ -449,6 +470,28 @@ mod tests {
             Ok(out) => assert_eq!(out, data, "a returned body must be the right one"),
             Err(e) => assert_eq!(e, DecodeError::Uncorrectable),
         }
+    }
+
+    #[test]
+    fn checksum_rejects_a_mixture_of_valid_codewords() {
+        let codec = BodyCodec::new(2000, EccLevel::Normal);
+        let first = vec![0x12; codec.block_size()];
+        let second = vec![0x34; codec.block_size()];
+        let a = codec.encode(&first, key(3));
+        let b = codec.encode(&second, key(3));
+        let mut mixed = crate::symbol::pack(&a[..codec.stream_symbols()]);
+        let other = crate::symbol::pack(&b[..codec.stream_symbols()]);
+        for (i, (codeword, _)) in codec.interleave_order().into_iter().enumerate() {
+            if codeword == 0 {
+                mixed[i] = other[i];
+            }
+        }
+        let mut symbols = unpack(&mixed, codec.stream_symbols());
+        symbols.extend_from_slice(&a[codec.stream_symbols()..]);
+        assert_eq!(
+            codec.decode(&certain(&symbols), key(3)),
+            Err(DecodeError::PacketCrc)
+        );
     }
 
     #[test]

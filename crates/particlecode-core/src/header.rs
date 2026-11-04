@@ -32,7 +32,7 @@ use crate::symbol::Sym3;
 /// Magic bits that reject false locks.
 pub const MAGIC: u8 = 0b10_1101;
 /// Format version (high 2 bits of the version field).
-pub const FORMAT_VERSION: u8 = 0;
+pub const FORMAT_VERSION: u8 = 2;
 /// Number of header dots.
 pub const HEADER_SYMBOLS: usize = 48;
 

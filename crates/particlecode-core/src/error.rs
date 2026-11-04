@@ -12,6 +12,9 @@ pub enum DecodeError {
     /// Reed-Solomon could not correct the header or a body codeword.
     #[error("too many symbol errors to correct")]
     Uncorrectable,
+    /// The recovered packet does not match its checksum or header identity.
+    #[error("packet CRC-32 mismatch")]
+    PacketCrc,
     /// Format version this build does not understand.
     #[error("unsupported format version {0}")]
     UnsupportedVersion(u8),

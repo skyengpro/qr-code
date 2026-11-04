@@ -888,6 +888,31 @@ mod tests {
     }
 
     #[test]
+    fn ring_sized_packets_survive_loss_across_passes_without_crc_errors() {
+        let data = payload(6000);
+        let s = session(&data, 314, 3);
+        assert_eq!(s.source_symbols(0), Some(20));
+        for seed in 1..=128 {
+            let mut rx = PacketReceiver::new();
+            let order = lossy_order(12 * s.frames_per_pass(), 50, seed);
+            let mut done = false;
+            for index in order {
+                let (header, packet) = s.packet(index);
+                match rx.push(&header, &packet) {
+                    Progress::Rejected(error) => panic!("seed {seed}, frame {index}: {error}"),
+                    Progress::Done(result) => {
+                        assert_eq!(result, data);
+                        done = true;
+                        break;
+                    }
+                    Progress::Accepted { .. } => {}
+                }
+            }
+            assert!(done, "seed {seed} did not finish");
+        }
+    }
+
+    #[test]
     fn random_garbage_never_panics_or_decodes() {
         let data = payload(12_000);
         let s = session(&data, 400, 3);
