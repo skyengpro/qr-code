@@ -70,9 +70,10 @@ is 8 erasures, which the code still corrects. Guaranteed: 4 symbol errors (4–8
 * **Whitening (addition to the spec):** the interleaved RS bytes are XORed with a keystream
   seeded by (session id, segment index, packet seed). This avoids large single-color regions
   and makes an old body paired with a new header fail RS decoding in normal conditions.
-  Format version 1 moves whitening after RS; version 0 whitened before RS and could accept
-  such a mixed frame, resetting a whole segment when its CRC finally failed. This is error
-  detection, not cryptographic authentication.
+  The released version 0 whitened before RS and could accept such a mixed frame, resetting
+  a whole segment when its CRC finally failed. An intermediate version 1 was used during
+  local testing; the released cutover is directly from version 0 to version 2. This is
+  error detection, not cryptographic authentication.
 * `B = ⌊3·dots / 8⌋` coded bytes are split into `C = ⌈B / 255⌉` codewords of near-equal
   length; each codeword of length `n` carries `⌈n · parity₂₅₅ / 255⌉` parity bytes
   (64 → RS(255,191) for animated frames, 96 → RS(255,159) for static frames).
