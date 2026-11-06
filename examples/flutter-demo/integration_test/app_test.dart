@@ -10,18 +10,32 @@ import 'package:particle_code_example/main.dart' as app;
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('launches and shows a code from the Rust encoder', (tester) async {
+  testWidgets('launches and shows a code from the Rust encoder', (
+    tester,
+  ) async {
     await app.main();
     await tester.pump(const Duration(seconds: 1));
 
     expect(ParticleCode.isInitialized, isTrue);
     expect(find.text('Show a code'), findsOneWidget);
-    await tester.ensureVisible(find.text('Show code'));
+    await tester.scrollUntilVisible(
+      find.text('Show code'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.tap(find.text('Show code'));
     // The code animates forever: pump frames instead of settling.
     for (var i = 0; i < 20; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
+    expect(find.text('Hide'), findsOneWidget);
+    // Reaching the button may have scrolled the code card (the list's first child) out
+    // of the lazily built list on a phone-sized screen; scroll back to it.
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('code-view')),
+      -200,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.byKey(const Key('code-view')), findsOneWidget);
     final info = tester.widget<Text>(find.byKey(const Key('info-line'))).data!;
     // ignore: avoid_print
