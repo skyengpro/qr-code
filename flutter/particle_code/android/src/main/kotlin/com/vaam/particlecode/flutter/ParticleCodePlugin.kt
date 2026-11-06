@@ -197,8 +197,8 @@ class ParticleCodePlugin :
                 if (id == null) {
                     result.error("bad_arguments", "releaseFrame needs {\"id\": int}", null)
                 } else {
-                    frames.release(id)
-                    result.success(null)
+                    val heldNanos = frames.release(id)
+                    result.success(if (heldNanos == null) null else mapOf("heldNanos" to heldNanos))
                 }
             }
             "setTorch" -> {

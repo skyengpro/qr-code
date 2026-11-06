@@ -5,10 +5,14 @@ import android.app.Activity
 import android.content.pm.PackageManager
 import android.graphics.ImageFormat
 import android.graphics.Matrix
+import android.hardware.camera2.CameraCharacteristics
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.util.Size
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.CameraState
@@ -32,6 +36,7 @@ import io.flutter.plugin.common.MethodChannel
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * One camera run: CameraX preview and analysis bound to the activity. Each analysis frame that
@@ -70,6 +75,20 @@ internal class ScannerSession(
     private var analysis: ImageAnalysis? = null
     private var cameraStates: LiveData<CameraState>? = null
 
+    /** Camera2 id of the bound camera, or null. Written on bind (main), read by the analyzer. */
+    @Volatile
+    private var cameraId: String? = null
+
+    /** `android_realtime` or `android_unknown`; see [timestampClockOf]. */
+    @Volatile
+    private var timestampClock = CLOCK_UNKNOWN
+
+    /** `back`, `front`, `external` or `unknown`. Main thread. */
+    private var facing = "unknown"
+
+    /** Images the analyzer closed because a frame was in flight, since the last frame event. */
+    private val skipped = AtomicInteger(0)
+
     /** Set by [stop]; analyzer callbacks that still arrive close their frames. */
     @Volatile
     private var closed = false
@@ -96,7 +115,7 @@ internal class ScannerSession(
     // region commands
 
     /**
-     * Bind the camera. [result] gets `null` once bound, or `permission_denied`, `no_camera` or
+     * Bind the camera. [result] gets `{cameraId, facing}` once bound, or `permission_denied`, `no_camera` or
      * `camera_error`. Idempotent: starting a running session only applies [torch].
      */
     fun start(torch: Boolean, result: MethodChannel.Result) {
@@ -108,7 +127,7 @@ internal class ScannerSession(
             }
             State.RUNNING -> {
                 camera?.let { applyTorch(it) }
-                result.success(null)
+                result.success(startInfo())
                 return
             }
             State.STARTING -> {
@@ -279,6 +298,7 @@ internal class ScannerSession(
         preview = newPreview
         analysis = newAnalysis
         camera = cam
+        readCameraInfo(cam)
 
         applyTorch(cam)
         refocusCenter(cam)
@@ -308,7 +328,43 @@ internal class ScannerSession(
         preview = null
         analysis = null
         camera = null
+        cameraId = null
+        timestampClock = CLOCK_UNKNOWN
+        facing = "unknown"
     }
+
+    /** The `start` result. Main thread. */
+    private fun startInfo(): Map<String, Any?> = mapOf("cameraId" to cameraId, "facing" to facing)
+
+    /** Main thread: camera id, facing and timestamp clock of the camera just bound. */
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
+    private fun readCameraInfo(cam: Camera) {
+        facing = when (cam.cameraInfo.lensFacing) {
+            CameraSelector.LENS_FACING_BACK -> "back"
+            CameraSelector.LENS_FACING_FRONT -> "front"
+            CameraSelector.LENS_FACING_EXTERNAL -> "external"
+            else -> "unknown"
+        }
+        try {
+            val info = Camera2CameraInfo.from(cam.cameraInfo)
+            timestampClock = timestampClockOf(
+                info.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE),
+            )
+            cameraId = info.cameraId
+        } catch (t: Throwable) {
+            // Not a Camera2 camera, or characteristics unavailable: ids and clock stay unknown.
+            Log.w(TAG, "camera2 info unavailable", t)
+            cameraId = null
+            timestampClock = CLOCK_UNKNOWN
+        }
+    }
+
+    private fun timestampClockOf(source: Int?): String =
+        if (source == CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME) {
+            CLOCK_REALTIME
+        } else {
+            CLOCK_UNKNOWN
+        }
 
     private fun applyTorch(cam: Camera) {
         if (torch && cam.cameraInfo.hasFlashUnit()) cam.cameraControl.enableTorch(true)
@@ -323,7 +379,8 @@ internal class ScannerSession(
     private fun completeWaiters() {
         val waiting = ArrayList(startWaiters)
         startWaiters.clear()
-        waiting.forEach { it.success(null) }
+        val info = startInfo()
+        waiting.forEach { it.success(info) }
     }
 
     private fun completeWaitersWithError(code: String, message: String) {
@@ -373,12 +430,17 @@ internal class ScannerSession(
     private val analyzer = ImageAnalysis.Analyzer { image -> onFrame(image) }
 
     private fun onFrame(image: ImageProxy) {
+        val receivedNanos = SystemClock.elapsedRealtimeNanos() // before any in-flight check
         if (closed) {
             image.close()
             return
         }
-        val id = frames.offer(image) // closes the image when a frame is already in flight
-        if (id < 0) return
+        val id = frames.offer(image, receivedNanos) // closes the image when one is in flight
+        if (id < 0) {
+            skipped.incrementAndGet()
+            return
+        }
+        val skippedBefore = skipped.getAndSet(0)
         try {
             val planes = image.planes
             if (image.format != ImageFormat.YUV_420_888 || planes.size != 3) {
@@ -402,6 +464,13 @@ internal class ScannerSession(
             event["yStride"] = planes[0].rowStride
             event["uvStride"] = planes[1].rowStride
             event["uvPixelStride"] = planes[1].pixelStride
+            event["format"] = "YUV_420_888"
+            event["rotationDegrees"] = info.rotationDegrees
+            event["cameraId"] = cameraId
+            event["timestampNanos"] = info.timestamp
+            event["timestampClock"] = timestampClock
+            event["receivedNanos"] = receivedNanos
+            event["skippedBefore"] = skippedBefore
             val geometry = FrameGeometry(
                 width = image.width,
                 height = image.height,
@@ -499,6 +568,8 @@ internal class ScannerSession(
 
     private companion object {
         const val TAG = "ParticleCode"
+        const val CLOCK_REALTIME = "android_realtime"
+        const val CLOCK_UNKNOWN = "android_unknown"
         // Native no longer knows whether a code is locked, so refocus on a fixed, relaxed period
         // (longer than AUTO_CANCEL_SECONDS: continuous AF runs in between).
         const val REFOCUS_INTERVAL_MS = 4_000L
