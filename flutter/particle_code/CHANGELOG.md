@@ -17,7 +17,19 @@
   `frame()` costs about 0.3 / 0.4 ms instead of 3.3 / 5.3 ms. The streaming JSON parser is
   gone; `frameJson` and `FrameSpec.fromJson` remain.
 * The `pc_abi_version` check is replaced by the bridge's content hash, verified by `init`.
-* Dropped the `ffi` package dependency.
+* Dropped the `ffi` package dependency (it is a dev dependency again, for the scanner tests).
+* The scanner now decodes in Dart: the platform only captures camera frames and hands them
+  over by address (`particle_code/camera_frames`, `releaseFrame`); `ParticleScanner` feeds
+  them to the Rust decoder through flutter_rust_bridge (planes read in place, no copy),
+  releases each frame, and builds `ScanFrame` / `ScanSegment` / `ScanDone` / `ScanError`
+  itself (anchors mapped through the frame's `toPreview`, hint code derived from the
+  decoder's advice text). The `ScanEvent` types, hint codes, `ParticleScannerPreview` and
+  the progress ring are unchanged.
+* **Breaking:** `ParticleScanner.start` needs `await ParticleCode.init()` and throws a
+  `StateError` otherwise. `ParticleScanner.eventsChannel` is now `framesChannel`
+  (`particle_code/camera_frames`; the constructor parameter `eventChannel` became
+  `framesChannel`). `reset()` no longer calls the platform: it swaps in a new decoder.
+  `stop()` waits for the frame in flight before stopping the camera.
 
 ## 0.2.0
 

@@ -1,16 +1,29 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../frame_spec.dart';
+import '../init.dart';
+import '../rust/api/dto.dart';
+import 'decoder.dart';
 import 'errors.dart';
 import 'events.dart';
+import 'mapping.dart';
 
-/// Controls the native camera scanner (CameraX on Android, AVFoundation on iOS).
+/// Controls the camera scanner: the platform captures and previews, Dart runs the decoder.
 ///
-/// Camera frames never cross into Dart: the native side decodes them with the Rust
-/// library and sends only small progress events ([events]) and, at the end, the payload.
+/// The native side (CameraX on Android, AVFoundation on iOS) only captures camera frames
+/// and hands them to Dart by address on the `particle_code/camera_frames` event channel.
+/// This class feeds each frame to the Rust decoder through flutter_rust_bridge (the planes
+/// are read in place, never copied), releases it, and turns the result into [events].
+/// See the plugin's `PROTOCOL.md`.
+///
+/// [start] needs `await ParticleCode.init()` to have completed and throws a [StateError]
+/// otherwise.
 ///
 /// ```dart
+/// await ParticleCode.init();
 /// final scanner = ParticleScanner();
 /// if (await scanner.requestPermission()) {
 ///   scanner.events.listen((e) { if (e is ScanDone) use(e.payload); });
@@ -21,91 +34,179 @@ import 'events.dart';
 /// ```
 class ParticleScanner {
   /// Creates a scanner. The channels default to the plugin's; override them in tests.
-  ParticleScanner({MethodChannel? methodChannel, EventChannel? eventChannel})
-    : _method = methodChannel ?? channel,
-      _eventChannel = eventChannel ?? eventsChannel {
-    _controller = StreamController<ScanEvent>.broadcast(
-      onListen: _attach,
-      onCancel: _detach,
-    );
+  ///
+  /// [decoderFactory] and [clock] are test seams.
+  ParticleScanner({
+    MethodChannel? methodChannel,
+    EventChannel? framesChannel,
+    @visibleForTesting FrameDecoder Function()? decoderFactory,
+    @visibleForTesting DateTime Function()? clock,
+  }) : _method = methodChannel ?? channel,
+       _framesChannel = framesChannel ?? ParticleScanner.framesChannel,
+       _decoderFactory = decoderFactory ?? RustFrameDecoder.new,
+       _customDecoder = decoderFactory != null,
+       _clock = clock ?? DateTime.now {
+    _controller = StreamController<ScanEvent>.broadcast(onListen: _onListen);
   }
 
   /// The method channel `particle_code/scanner`.
   static const MethodChannel channel = MethodChannel('particle_code/scanner');
 
-  /// The event channel `particle_code/scan_events`.
-  static const EventChannel eventsChannel = EventChannel(
-    'particle_code/scan_events',
+  /// The event channel `particle_code/camera_frames` (camera frames from the platform).
+  static const EventChannel framesChannel = EventChannel(
+    'particle_code/camera_frames',
   );
 
+  /// Minimum time between two [ScanFrame]s that carry no progress change.
+  static const Duration frameInterval = Duration(milliseconds: 100);
+
   final MethodChannel _method;
-  final EventChannel _eventChannel;
+  final EventChannel _framesChannel;
+  final FrameDecoder Function() _decoderFactory;
+  final bool _customDecoder;
+  final DateTime Function() _clock;
   late final StreamController<ScanEvent> _controller;
-  StreamSubscription<dynamic>? _subscription;
+
+  StreamSubscription<dynamic>? _framesSub;
+  FrameDecoder? _decoder;
+  // Incremented by reset(): a result of an older decoder is dropped.
+  int _generation = 0;
   bool _disposed = false;
 
+  // Frames are decoded only while active, not done and not stopping.
+  bool _active = false;
+  bool _done = false;
+  bool _stopping = false;
+  Future<void>? _inFlight;
+
+  // Sticky across rejected frames.
+  int _have = 0;
+  int _need = 0;
+  int _segmentsDone = 0;
+  int _segmentsTotal = 0;
+  (int, int, int, int) _lastKey = (0, 0, 0, 0);
+  DateTime? _lastFrameAt;
+  ScanDone? _undelivered;
+
   /// Broadcast stream of scanner events. Listening does not start the camera; call
-  /// [start] for that. Malformed events arrive as a [ScanError] with code
+  /// [start] for that. Malformed camera events arrive as a [ScanError] with code
   /// `malformed_event`; events of unknown type are ignored.
   Stream<ScanEvent> get events => _controller.stream;
 
-  void _attach() {
-    _subscription = _eventChannel.receiveBroadcastStream().listen(
-      _onRaw,
-      onError: _onError,
-    );
-  }
-
-  Future<void> _detach() async {
-    final sub = _subscription;
-    _subscription = null;
-    await sub?.cancel();
-  }
-
-  void _onRaw(dynamic raw) {
-    if (_controller.isClosed) return;
-    try {
-      final event = ScanEvent.fromMap(raw);
-      if (event != null) _controller.add(event);
-    } on FormatException catch (e) {
-      _controller.add(ScanError('malformed_event', e.message));
+  void _onListen() {
+    // The transfer can finish while nobody listens; the payload must not get lost.
+    final waiting = _undelivered;
+    if (waiting != null) {
+      _undelivered = null;
+      scheduleMicrotask(() => _emit(waiting));
     }
   }
 
-  void _onError(Object error) {
+  void _emit(ScanEvent event) {
     if (_controller.isClosed) return;
-    if (error is PlatformException) {
-      _controller.add(ScanError(error.code, error.message ?? ''));
-    } else {
-      _controller.add(ScanError('unknown', '$error'));
+    if (event is ScanDone && !_controller.hasListener) {
+      _undelivered = event;
+      return;
     }
+    _controller.add(event);
   }
 
   /// Asks for the camera permission; returns whether it is granted.
   Future<bool> requestPermission() async =>
       await _invoke<bool>('requestPermission') ?? false;
 
-  /// Starts the camera and decoder. Completes once the camera runs.
+  /// Starts the camera and decoding. Completes once the camera runs.
   ///
-  /// Throws [ParticleScannerException] with [ParticleScannerError.permissionDenied],
+  /// Throws a [StateError] if `ParticleCode.init()` has not completed, and a
+  /// [ParticleScannerException] with [ParticleScannerError.permissionDenied],
   /// [ParticleScannerError.noCamera] or [ParticleScannerError.cameraError].
-  Future<void> start({bool torch = false}) =>
-      _invoke<void>('start', {'torch': torch});
+  Future<void> start({bool torch = false}) async {
+    _checkNotDisposed();
+    if (!_customDecoder) ParticleCode.checkInitialized();
+    _decoder ??= _decoderFactory();
+    _stopping = false;
+    // Listen before the camera starts: a frame nobody receives would never be released.
+    _framesSub ??= _framesChannel.receiveBroadcastStream().listen(
+      _onRaw,
+      onError: _onStreamError,
+    );
+    _active = true;
+    try {
+      await _invoke<void>('start', {'torch': torch});
+    } catch (_) {
+      _active = false;
+      unawaited(_cancelFrames());
+      rethrow;
+    }
+  }
 
-  /// Stops the camera. Idempotent.
-  Future<void> stop() => _invoke<void>('stop');
+  /// Stops the camera. Waits for the frame being decoded, releases it, then stops the
+  /// platform. Idempotent.
+  Future<void> stop() async {
+    _checkNotDisposed();
+    _stopping = true;
+    try {
+      await _settle();
+      await _invoke<void>('stop');
+    } finally {
+      _active = false;
+      _stopping = false;
+      await _cancelFrames();
+    }
+  }
 
-  /// Drops progress and starts a new decoder, keeping the camera running.
-  Future<void> reset() => _invoke<void>('reset');
+  /// Drops progress and starts a new decoder, keeping the camera running. Decoding
+  /// continues after a [ScanDone]. No platform call.
+  Future<void> reset() async {
+    _checkNotDisposed();
+    final old = _decoder;
+    _generation++;
+    _done = false;
+    _undelivered = null;
+    _clearProgress();
+    if (old != null) {
+      _decoder = _decoderFactory();
+      _disposeWhenIdle(old);
+    }
+  }
 
   /// Turns the torch on or off. Returns whether the device has a torch.
   Future<bool> setTorch(bool on) async =>
       await _invoke<bool>('setTorch', {'on': on}) ?? false;
 
-  Future<T?> _invoke<T>(String method, [Object? arguments]) async {
-    if (_disposed) {
-      throw StateError('ParticleScanner used after dispose()');
+  /// Stops the camera (best effort), releases the decoder and closes [events].
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _active = false;
+    final decoder = _decoder;
+    _decoder = null;
+    final sub = _framesSub;
+    _framesSub = null;
+    unawaited(sub?.cancel());
+    unawaited(_controller.close());
+    Future<void> shutdown() async {
+      // Fire and forget; the platform may already be gone.
+      try {
+        await _method.invokeMethod<void>('stop');
+      } catch (_) {}
+      decoder?.dispose();
     }
+
+    final pending = _inFlight;
+    if (pending == null) {
+      unawaited(shutdown());
+    } else {
+      unawaited(pending.then<void>((_) => shutdown()));
+    }
+  }
+
+  void _checkNotDisposed() {
+    if (_disposed) throw StateError('ParticleScanner used after dispose()');
+  }
+
+  Future<T?> _invoke<T>(String method, [Object? arguments]) async {
+    _checkNotDisposed();
     try {
       return await _method.invokeMethod<T>(method, arguments);
     } on PlatformException catch (e) {
@@ -118,17 +219,247 @@ class ParticleScanner {
     }
   }
 
-  /// Stops the camera (best effort) and closes [events].
-  void dispose() {
-    if (_disposed) return;
-    _disposed = true;
-    // Fire and forget; the platform may already be gone.
-    _method
-        .invokeMethod<void>('stop')
-        .then<void>((_) {}, onError: (Object _) {});
-    final sub = _subscription;
-    _subscription = null;
-    unawaited(sub?.cancel());
-    unawaited(_controller.close());
+  Future<void> _settle() async {
+    final pending = _inFlight;
+    if (pending != null) await pending;
   }
+
+  void _disposeWhenIdle(FrameDecoder decoder) {
+    final pending = _inFlight;
+    if (pending == null) {
+      decoder.dispose();
+    } else {
+      unawaited(pending.then<void>((_) => decoder.dispose()));
+    }
+  }
+
+  Future<void> _cancelFrames() async {
+    final sub = _framesSub;
+    _framesSub = null;
+    await sub?.cancel();
+  }
+
+  void _clearProgress() {
+    _have = 0;
+    _need = 0;
+    _segmentsDone = 0;
+    _segmentsTotal = 0;
+    _lastKey = (0, 0, 0, 0);
+    _lastFrameAt = null;
+  }
+
+  // region camera frames
+
+  void _onStreamError(Object error) {
+    if (error is PlatformException) {
+      _emit(ScanError(error.code, error.message ?? ''));
+    } else {
+      _emit(ScanError('unknown', '$error'));
+    }
+  }
+
+  void _onRaw(dynamic raw) {
+    if (raw is! Map) {
+      _emit(
+        ScanError(
+          'malformed_event',
+          'camera event is not a map: ${raw.runtimeType}',
+        ),
+      );
+      return;
+    }
+    switch (raw['type']) {
+      case 'frame':
+        _onFrame(raw);
+      case 'error':
+        _emit(
+          ScanError(
+            (raw['code'] as String?) ?? 'unknown',
+            (raw['message'] as String?) ?? '',
+          ),
+        );
+      default:
+        break; // forward compatibility
+    }
+  }
+
+  void _onFrame(Map<Object?, Object?> map) {
+    final id = map['id'];
+    if (id is! int) {
+      _emit(const ScanError('malformed_event', 'camera frame without an id'));
+      return;
+    }
+    // Defensive: native keeps one frame in flight, but never queue a second.
+    if (!_active || _done || _stopping || _inFlight != null) {
+      _release(id);
+      return;
+    }
+    final CameraFrameDto dto;
+    final List<double> toPreview;
+    try {
+      dto = _frameDto(map);
+      toPreview = _affine(map['toPreview']);
+    } on FormatException catch (e) {
+      _release(id);
+      _emit(ScanError('malformed_event', e.message));
+      return;
+    }
+    final decoder = _decoder;
+    if (decoder == null) {
+      _release(id);
+      return;
+    }
+    final future = _process(id, decoder, _generation, dto, toPreview);
+    _inFlight = future;
+    unawaited(
+      future.whenComplete(() {
+        if (identical(_inFlight, future)) _inFlight = null;
+      }),
+    );
+  }
+
+  Future<void> _process(
+    int id,
+    FrameDecoder decoder,
+    int generation,
+    CameraFrameDto dto,
+    List<double> toPreview,
+  ) async {
+    try {
+      final result = await decoder.feed(dto);
+      if (generation == _generation && !_disposed) {
+        _handleResult(decoder, result, toPreview);
+      }
+    } catch (e, st) {
+      // A bad frame is normal at first; a bridge failure is a bug worth a log.
+      debugPrint('particle_code: decoding a frame failed: $e\n$st');
+    } finally {
+      await _releaseAndWait(id);
+    }
+  }
+
+  void _release(int id) => unawaited(_releaseAndWait(id));
+
+  Future<void> _releaseAndWait(int id) async {
+    try {
+      await _method.invokeMethod<void>('releaseFrame', {'id': id});
+    } catch (_) {
+      // The platform may be gone; nothing to release then.
+    }
+  }
+
+  void _handleResult(
+    FrameDecoder decoder,
+    FrameResultDto result,
+    List<double> toPreview,
+  ) {
+    var status = ScanStatus.rejected;
+    Uint8List? donePayload;
+    switch (result.progress) {
+      case ProgressDto_Accepted(
+        :final have,
+        :final need,
+        :final segmentsDone,
+        :final segmentsTotal,
+      ):
+        status = ScanStatus.accepted;
+        _have = have;
+        _need = need;
+        _segmentsDone = segmentsDone;
+        _segmentsTotal = segmentsTotal;
+      case ProgressDto_Done(:final payload):
+        status = ScanStatus.done;
+        donePayload = payload;
+        if (_need > 0) _have = _need;
+        if (_segmentsTotal > 0) _segmentsDone = _segmentsTotal;
+      case ProgressDto_Rejected():
+        break;
+    }
+
+    final ready = status == ScanStatus.rejected ? null : decoder.takeReady();
+    final sessionId = donePayload == null ? -1 : (decoder.sessionId() ?? -1);
+
+    final now = _clock();
+    final key = (_have, _need, _segmentsDone, _segmentsTotal);
+    final changed = key != _lastKey || status == ScanStatus.done;
+    final last = _lastFrameAt;
+    if (changed || last == null || now.difference(last) >= frameInterval) {
+      _lastFrameAt = now;
+      _lastKey = key;
+      _emit(_scanFrame(result, status, toPreview));
+    }
+    if (ready != null && ready.isNotEmpty) _emit(ScanSegment(ready));
+    if (donePayload != null) {
+      _done = true;
+      _emit(ScanDone(donePayload, sessionId));
+    }
+  }
+
+  ScanFrame _scanFrame(
+    FrameResultDto r,
+    ScanStatus status,
+    List<double> toPreview,
+  ) {
+    final live = r.liveness;
+    return ScanFrame(
+      status: status,
+      locked: r.locked,
+      profile: r.profile == null
+          ? null
+          : CodeProfile.fromCode(r.profile!.index),
+      shapeId: r.shapeId,
+      have: _have,
+      need: _need,
+      segmentsDone: _segmentsDone,
+      segmentsTotal: _segmentsTotal,
+      liveness: switch (live) {
+        LivenessDto_Read(:final consistent, :final seedLow, :final rolling) =>
+          ScanLiveness(
+            consistent: consistent,
+            seedLow: seedLow,
+            rolling: rolling,
+          ),
+        _ => null,
+      },
+      anchors: mapAnchorsToPreview(r.anchors, toPreview),
+      sharpness: r.sharpness,
+      hint: r.hint,
+      hintCode: hintCodeFor(r.hint),
+      rejectReason: switch (r.progress) {
+        ProgressDto_Rejected(:final reason) => r.rejectReason ?? reason,
+        _ => r.rejectReason,
+      },
+    );
+  }
+
+  // endregion
+}
+
+CameraFrameDto _frameDto(Map<Object?, Object?> m) {
+  int i(String key) {
+    final v = m[key];
+    if (v is int) return v;
+    throw FormatException('camera frame field "$key" is not an int: $v');
+  }
+
+  return CameraFrameDto(
+    width: i('width'),
+    height: i('height'),
+    yAddress: i('yAddress'),
+    yLen: i('yLen'),
+    uAddress: i('uAddress'),
+    uLen: i('uLen'),
+    vAddress: i('vAddress'),
+    vLen: i('vLen'),
+    yStride: i('yStride'),
+    uvStride: i('uvStride'),
+    uvPixelStride: i('uvPixelStride'),
+  );
+}
+
+List<double> _affine(Object? raw) {
+  if (raw is List && raw.length == 6 && raw.every((e) => e is num)) {
+    return [for (final e in raw) (e as num).toDouble()];
+  }
+  throw FormatException('camera frame "toPreview" is not 6 numbers: $raw');
 }

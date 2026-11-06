@@ -1,8 +1,15 @@
+import 'dart:async';
+import 'dart:ffi' hide Size;
+
+import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:particle_code/particle_code.dart';
+import 'package:particle_code/src/rust/api/dto.dart';
+import 'package:particle_code/src/scanner/decoder.dart';
+import 'package:particle_code/src/scanner/mapping.dart';
 
 Map<Object?, Object?> _frameMap({Map<Object?, Object?> overrides = const {}}) =>
     {
@@ -203,64 +210,104 @@ void main() {
     });
   });
 
+  group('mapping', () {
+    test('anchors go through the toPreview affine', () {
+      // x' = 2x + 3y + 5, y' = -x + 4y + 7
+      const m = [2.0, 3.0, 5.0, -1.0, 4.0, 7.0];
+      expect(mapToPreview(10, 20, m), const Offset(85, 77));
+      expect(
+        mapAnchorsToPreview(const [
+          ImagePointDto(x: 0, y: 0),
+          ImagePointDto(x: 1, y: 1),
+        ], m),
+        const [Offset(5, 7), Offset(10, 10)],
+      );
+      expect(mapAnchorsToPreview(const [], m), isEmpty);
+    });
+
+    test('a rotation with the aspect-fill crop can leave 0..1', () {
+      // 90 degrees clockwise of a 640x480 buffer: x' = 1 - y/480, y' = x/640.
+      const m = [0.0, -1 / 480, 1.0, 1 / 640, 0.0, 0.0];
+      expect(mapToPreview(0, 0, m), const Offset(1, 0));
+      expect(mapToPreview(640, 480, m), const Offset(0, 1));
+      expect(mapToPreview(960, 0, m).dy, greaterThan(1));
+    });
+
+    test('hint texts of the decoder map to codes', () {
+      expect(hintCodeFor(null), ScanHint.none);
+      expect(hintCodeFor(''), ScanHint.none);
+      expect(hintCodeFor('Point the camera at the code'), ScanHint.pointAtCode);
+      expect(
+        hintCodeFor('Move back: the whole code must be in view'),
+        ScanHint.moveBack,
+      );
+      expect(
+        hintCodeFor('Hold the phone steady, facing the code'),
+        ScanHint.holdSteady,
+      );
+      expect(
+        hintCodeFor(
+          'Too dark or too much glare: change the angle or the light',
+        ),
+        ScanHint.lighting,
+      );
+      expect(
+        hintCodeFor('This code needs a newer version of the app'),
+        ScanHint.updateApp,
+      );
+      expect(hintCodeFor('something else'), ScanHint.other);
+    });
+  });
+
   group('method channel', () {
-    final calls = <MethodCall>[];
-    late Object? Function(MethodCall) handler;
+    late _Rig rig;
     late ParticleScanner scanner;
-    final messenger =
-        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
     setUp(() {
-      calls.clear();
-      handler = (_) => null;
-      messenger.setMockMethodCallHandler(ParticleScanner.channel, (call) async {
-        calls.add(call);
-        return handler(call);
-      });
-      scanner = ParticleScanner();
+      rig = _Rig()..install();
+      scanner = rig.scanner();
     });
 
-    tearDown(() {
-      scanner.dispose();
-      messenger.setMockMethodCallHandler(ParticleScanner.channel, null);
-    });
+    tearDown(() => scanner.dispose());
 
     test('requestPermission', () async {
-      handler = (_) => true;
+      rig.handler = (_) => true;
       expect(await scanner.requestPermission(), isTrue);
-      handler = (_) => false;
+      rig.handler = (_) => false;
       expect(await scanner.requestPermission(), isFalse);
-      handler = (_) => null;
+      rig.handler = (_) => null;
       expect(await scanner.requestPermission(), isFalse);
-      expect(calls.map((c) => c.method), everyElement('requestPermission'));
-      expect(calls.first.arguments, isNull);
+      expect(rig.methods, everyElement('requestPermission'));
+      expect(rig.calls.first.arguments, isNull);
     });
 
     test('start sends the torch flag', () async {
       await scanner.start();
       await scanner.start(torch: true);
-      expect(calls.map((c) => c.method), ['start', 'start']);
-      expect(calls[0].arguments, {'torch': false});
-      expect(calls[1].arguments, {'torch': true});
+      expect(rig.methods, ['start', 'start']);
+      expect(rig.calls[0].arguments, {'torch': false});
+      expect(rig.calls[1].arguments, {'torch': true});
+      expect(rig.listens, 1); // one frames subscription for both
     });
 
-    test('stop and reset', () async {
+    test('stop is idempotent', () async {
+      await scanner.start();
       await scanner.stop();
-      await scanner.reset();
-      expect(calls.map((c) => c.method), ['stop', 'reset']);
+      await scanner.stop();
+      expect(rig.methods, ['start', 'stop', 'stop']);
     });
 
     test('setTorch returns whether a torch exists', () async {
-      handler = (_) => true;
+      rig.handler = (_) => true;
       expect(await scanner.setTorch(true), isTrue);
-      expect(calls.single.arguments, {'on': true});
-      handler = (_) => false;
+      expect(rig.calls.single.arguments, {'on': true});
+      rig.handler = (_) => false;
       expect(await scanner.setTorch(false), isFalse);
     });
 
     for (final code in ['permission_denied', 'no_camera', 'camera_error']) {
-      test('start maps $code', () async {
-        handler = (_) =>
+      test('start maps $code and stops listening for frames', () async {
+        rig.handler = (_) =>
             throw PlatformException(code: code, message: 'm-$code');
         await expectLater(
           scanner.start(),
@@ -275,11 +322,13 @@ void main() {
                 .having((e) => e.code, 'code', code),
           ),
         );
+        await pumpEventQueue();
+        expect(rig.cancels, 1);
       });
     }
 
     test('an unknown code becomes unknown', () async {
-      handler = (_) => throw PlatformException(code: 'weird');
+      rig.handler = (_) => throw PlatformException(code: 'weird');
       await expectLater(
         scanner.start(),
         throwsA(
@@ -293,7 +342,7 @@ void main() {
     });
 
     test('no plugin registered is reported as unsupported', () async {
-      messenger.setMockMethodCallHandler(ParticleScanner.channel, null);
+      rig.messenger.setMockMethodCallHandler(ParticleScanner.channel, null);
       await expectLater(
         scanner.start(),
         throwsA(
@@ -306,114 +355,459 @@ void main() {
       );
     });
 
-    test('dispose stops the camera and forbids further use', () async {
-      final s = ParticleScanner();
-      s.dispose();
-      await Future<void>.delayed(Duration.zero);
-      expect(calls.map((c) => c.method), contains('stop'));
-      await expectLater(s.start(), throwsStateError);
-      s.dispose(); // idempotent
+    test('dispose stops the camera, frees the decoder, forbids use', () async {
+      await scanner.start();
+      final decoder = rig.decoders.single;
+      scanner.dispose();
+      await pumpEventQueue();
+      expect(rig.methods.last, 'stop');
+      expect(decoder.disposed, isTrue);
+      await expectLater(scanner.start(), throwsStateError);
+      await expectLater(scanner.reset(), throwsStateError);
+      scanner.dispose(); // idempotent
+    });
+
+    test('listening to events calls no method and starts no frames', () async {
+      final sub = scanner.events.listen((_) {});
+      await pumpEventQueue();
+      expect(rig.calls, isEmpty);
+      expect(rig.listens, 0);
+      await sub.cancel();
     });
   });
 
-  group('event channel', () {
-    final messenger =
-        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    late MockStreamHandlerEventSink? sink;
-    var listens = 0;
-    var cancels = 0;
+  group('frames', () {
+    late _Rig rig;
+    late ParticleScanner scanner;
+    late List<ScanEvent> got;
+    late _Clock clock;
 
-    setUp(() {
-      sink = null;
-      listens = 0;
-      cancels = 0;
-      messenger.setMockStreamHandler(
-        ParticleScanner.eventsChannel,
-        MockStreamHandler.inline(
-          onListen: (args, events) {
-            listens++;
-            sink = events;
-          },
-          onCancel: (args) {
-            cancels++;
-          },
-        ),
-      );
+    setUp(() async {
+      rig = _Rig()..install();
+      clock = _Clock();
+      scanner = rig.scanner(clock: clock.call);
+      got = [];
+      scanner.events.listen(got.add);
+      await scanner.start();
+      await pumpEventQueue();
     });
 
-    tearDown(
-      () => messenger.setMockStreamHandler(ParticleScanner.eventsChannel, null),
+    tearDown(() => scanner.dispose());
+
+    test(
+      'a rejected frame is a ScanFrame with its hint, then released',
+      () async {
+        rig.next(_rejected('no lock', hint: 'Point the camera at the code'));
+        rig.frame(7);
+        await pumpEventQueue();
+        final f = got.single as ScanFrame;
+        expect(f.status, ScanStatus.rejected);
+        expect(f.locked, isFalse);
+        expect(f.hint, 'Point the camera at the code');
+        expect(f.hintCode, ScanHint.pointAtCode);
+        expect(f.rejectReason, 'no lock');
+        expect(f.anchors, isEmpty);
+        expect(rig.released, [7]);
+        expect(rig.decoders.single.fed, hasLength(1));
+        final fed = rig.decoders.single.fed.single;
+        expect((fed.width, fed.height), (640, 480));
+        expect((fed.yStride, fed.uvStride, fed.uvPixelStride), (640, 320, 2));
+        expect(fed.yAddress, 1000);
+        expect(fed.vLen, 2999);
+      },
     );
 
-    test('delivers typed events, ignores unknown, flags malformed', () async {
-      final scanner = ParticleScanner();
-      addTearDown(scanner.dispose);
-      final got = <ScanEvent>[];
-      final sub = scanner.events.listen(got.add);
-      await Future<void>.delayed(Duration.zero);
-      expect(listens, 1);
-
-      sink!.success(_frameMap());
-      sink!.success({'type': 'unheard-of'});
-      sink!.success({'type': 'done', 'payload': 5, 'sessionId': 1});
-      sink!.success({
-        'type': 'segment',
-        'bytes': Uint8List.fromList([7]),
-      });
-      sink!.success({
-        'type': 'done',
-        'payload': Uint8List.fromList([1, 2]),
-        'sessionId': 3,
-      });
-      sink!.error(code: 'camera_error', message: 'lost');
-      await Future<void>.delayed(Duration.zero);
-
-      expect(got.map((e) => e.runtimeType), [
-        ScanFrame,
-        ScanError,
-        ScanSegment,
-        ScanDone,
-        ScanError,
-      ]);
-      expect((got[1] as ScanError).code, 'malformed_event');
-      expect((got[4] as ScanError).code, 'camera_error');
-      await sub.cancel();
-      await Future<void>.delayed(Duration.zero);
-      expect(cancels, 1);
-    });
-
-    test('is broadcast and attaches once for many listeners', () async {
-      final scanner = ParticleScanner();
-      addTearDown(scanner.dispose);
-      final a = <ScanEvent>[];
-      final b = <ScanEvent>[];
-      final s1 = scanner.events.listen(a.add);
-      final s2 = scanner.events.listen(b.add);
-      await Future<void>.delayed(Duration.zero);
-      expect(listens, 1);
-      sink!.success(_frameMap());
-      await Future<void>.delayed(Duration.zero);
-      expect((a.length, b.length), (1, 1));
-      await s1.cancel();
-      await s2.cancel();
-    });
-
-    test('listening does not call any method', () async {
-      final calls = <MethodCall>[];
-      messenger.setMockMethodCallHandler(ParticleScanner.channel, (c) async {
-        calls.add(c);
-        return null;
-      });
-      addTearDown(
-        () => messenger.setMockMethodCallHandler(ParticleScanner.channel, null),
+    test('anchors are mapped through toPreview', () async {
+      rig.next(
+        _result(
+          locked: true,
+          anchors: const [
+            ImagePointDto(x: 320, y: 0),
+            ImagePointDto(x: 640, y: 480),
+          ],
+          progress: const ProgressDto.accepted(
+            have: 1,
+            need: 4,
+            segmentsDone: 0,
+            segmentsTotal: 1,
+          ),
+        ),
       );
-      final scanner = ParticleScanner();
-      final sub = scanner.events.listen((_) {});
-      await Future<void>.delayed(Duration.zero);
-      expect(calls, isEmpty);
-      await sub.cancel();
-      scanner.dispose();
+      rig.frame(1, toPreview: [0, -1 / 480, 1, 1 / 640, 0, 0]);
+      await pumpEventQueue();
+      final f = got.single as ScanFrame;
+      expect(f.locked, isTrue);
+      expect(f.anchors, [const Offset(1, 0.5), const Offset(0, 1)]);
+      expect(f.profile, CodeProfile.m);
+      expect(f.shapeId, 28);
+      expect(f.liveness!.seedLow, 9);
+      expect(f.progress, 0.25);
     });
+
+    test(
+      'a frame arriving while one is in flight is released at once',
+      () async {
+        final gate = rig.decoders.single.gate = Completer<void>();
+        rig.next(_rejected('x'));
+        rig.frame(1);
+        await pumpEventQueue();
+        rig.frame(2);
+        await pumpEventQueue();
+        expect(rig.released, [2]);
+        expect(rig.decoders.single.fed, hasLength(1));
+        gate.complete();
+        await pumpEventQueue();
+        expect(rig.released, [2, 1]);
+        expect(got, hasLength(1));
+      },
+    );
+
+    test('a decoder failure still releases the frame', () async {
+      rig.decoders.single.failWith = StateError('boom');
+      rig.frame(3);
+      await pumpEventQueue();
+      expect(rig.released, [3]);
+      expect(got, isEmpty);
+      rig.decoders.single.failWith = null;
+      rig.next(_rejected('x'));
+      rig.frame(4);
+      await pumpEventQueue();
+      expect(rig.released, [3, 4]);
+      expect(got, hasLength(1));
+    });
+
+    test(
+      'stop waits for the frame in flight, releases it, then stops',
+      () async {
+        final gate = rig.decoders.single.gate = Completer<void>();
+        rig.next(_rejected('x'));
+        rig.frame(1);
+        await pumpEventQueue();
+        var stopped = false;
+        final stop = scanner.stop().then((_) => stopped = true);
+        await pumpEventQueue();
+        expect(stopped, isFalse);
+        expect(rig.methods, ['start']);
+        rig.frame(2); // while stopping
+        await pumpEventQueue();
+        expect(rig.released, [2]);
+        gate.complete();
+        await stop;
+        expect(rig.methods, ['start', 'releaseFrame', 'releaseFrame', 'stop']);
+        expect(rig.released, [2, 1]);
+        expect(rig.decoders.single.fed, hasLength(1));
+        expect(rig.cancels, 1);
+      },
+    );
+
+    test('frames after stop are released, never decoded', () async {
+      await scanner.stop();
+      expect(rig.cancels, 1);
+      // Feed the handler directly as if the platform sent one late.
+      rig.frame(5);
+      await pumpEventQueue();
+      expect(rig.decoders.single.fed, isEmpty);
+    });
+
+    test('have and need are sticky across rejected frames', () async {
+      rig.next(
+        _result(
+          locked: true,
+          progress: const ProgressDto.accepted(
+            have: 5,
+            need: 20,
+            segmentsDone: 1,
+            segmentsTotal: 3,
+          ),
+        ),
+      );
+      rig.next(_rejected('blur'));
+      rig.frame(1);
+      await pumpEventQueue();
+      clock.advance(const Duration(seconds: 1));
+      rig.frame(2);
+      await pumpEventQueue();
+      final frames = got.whereType<ScanFrame>().toList();
+      expect(frames, hasLength(2));
+      expect((frames[0].have, frames[0].need), (5, 20));
+      expect(frames[1].status, ScanStatus.rejected);
+      expect((frames[1].have, frames[1].need), (5, 20));
+      expect((frames[1].segmentsDone, frames[1].segmentsTotal), (1, 3));
+    });
+
+    test(
+      'frames are limited to about ten per second, progress is not',
+      () async {
+        for (var i = 0; i < 5; i++) {
+          rig.next(_rejected('x'));
+          rig.frame(i);
+          await pumpEventQueue();
+          clock.advance(const Duration(milliseconds: 30));
+        }
+        // t = 0 (emitted), 30, 60, 90 (dropped), 120 (emitted)
+        expect(got.whereType<ScanFrame>(), hasLength(2));
+        for (var i = 0; i < 3; i++) {
+          rig.next(
+            _result(
+              locked: true,
+              progress: ProgressDto.accepted(
+                have: i + 1,
+                need: 9,
+                segmentsDone: 0,
+                segmentsTotal: 1,
+              ),
+            ),
+          );
+          rig.frame(10 + i);
+          await pumpEventQueue();
+          clock.advance(const Duration(milliseconds: 1));
+        }
+        expect(got.whereType<ScanFrame>(), hasLength(5));
+      },
+    );
+
+    test('segments follow accepted frames', () async {
+      rig.decoders.single.ready = Uint8List.fromList([1, 2, 3]);
+      rig.next(
+        _result(
+          locked: true,
+          progress: const ProgressDto.accepted(
+            have: 2,
+            need: 9,
+            segmentsDone: 1,
+            segmentsTotal: 2,
+          ),
+        ),
+      );
+      rig.frame(1);
+      await pumpEventQueue();
+      expect(got.map((e) => e.runtimeType), [ScanFrame, ScanSegment]);
+      expect((got[1] as ScanSegment).bytes, [1, 2, 3]);
+    });
+
+    test(
+      'done: the payload once, then frames are released undecoded',
+      () async {
+        rig.decoders.single.session = 0x2A3B;
+        rig.next(
+          _result(
+            locked: true,
+            progress: const ProgressDto.accepted(
+              have: 3,
+              need: 6,
+              segmentsDone: 0,
+              segmentsTotal: 1,
+            ),
+          ),
+        );
+        rig.next(
+          _result(
+            locked: true,
+            progress: ProgressDto.done(payload: Uint8List.fromList([9, 9, 9])),
+          ),
+        );
+        rig.frame(1);
+        await pumpEventQueue();
+        rig.frame(2);
+        await pumpEventQueue();
+        rig.frame(3);
+        rig.frame(4);
+        await pumpEventQueue();
+        expect(got.map((e) => e.runtimeType), [ScanFrame, ScanFrame, ScanDone]);
+        final last = got.whereType<ScanFrame>().last;
+        expect(last.status, ScanStatus.done);
+        expect((last.have, last.need), (6, 6));
+        expect((last.segmentsDone, last.segmentsTotal), (1, 1));
+        final done = got.last as ScanDone;
+        expect(done.payload, [9, 9, 9]);
+        expect(done.sessionId, 0x2A3B);
+        expect(rig.decoders.single.fed, hasLength(2));
+        expect(rig.released, [1, 2, 3, 4]);
+        expect(
+          rig.methods,
+          isNot(contains('stop')),
+        ); // the camera keeps running
+      },
+    );
+
+    test('reset: a new decoder, clean progress, no platform call', () async {
+      rig.next(
+        _result(
+          locked: true,
+          progress: ProgressDto.done(payload: Uint8List(0)),
+        ),
+      );
+      rig.frame(1);
+      await pumpEventQueue();
+      expect(got.last, isA<ScanDone>());
+      final before = rig.calls.length;
+      final old = rig.decoders.single;
+      await scanner.reset();
+      expect(rig.calls.length, before);
+      expect(rig.decoders, hasLength(2));
+      expect(old.disposed, isTrue);
+      expect(rig.decoders.last.disposed, isFalse);
+
+      // Decoding resumes after a done.
+      rig.next(_rejected('x'));
+      rig.frame(2);
+      await pumpEventQueue();
+      final f = got.last as ScanFrame;
+      expect((f.have, f.need), (0, 0));
+      expect(rig.decoders.last.fed, hasLength(1));
+      expect(old.fed, hasLength(1));
+    });
+
+    test(
+      'reset during a decode drops its result and frees the old decoder later',
+      () async {
+        final old = rig.decoders.single;
+        final gate = old.gate = Completer<void>();
+        rig.next(_rejected('x'));
+        rig.frame(1);
+        await pumpEventQueue();
+        await scanner.reset();
+        expect(old.disposed, isFalse);
+        gate.complete();
+        await pumpEventQueue();
+        expect(old.disposed, isTrue);
+        expect(got, isEmpty);
+        expect(rig.released, [1]);
+      },
+    );
+
+    test('a payload nobody listened for reaches the next listener', () async {
+      scanner.dispose();
+      final s = rig.scanner(clock: clock.call);
+      addTearDown(s.dispose);
+      await s.start();
+      rig.next(
+        _result(
+          locked: true,
+          progress: ProgressDto.done(payload: Uint8List.fromList([4])),
+        ),
+      );
+      rig.frame(1);
+      await pumpEventQueue();
+      final late = <ScanEvent>[];
+      s.events.listen(late.add);
+      await pumpEventQueue();
+      expect((late.single as ScanDone).payload, [4]);
+    });
+
+    test('platform errors and malformed frames become ScanErrors', () async {
+      rig.sink!.error(code: 'camera_error', message: 'lost');
+      rig.sink!.success({
+        'type': 'error',
+        'code': 'camera_error',
+        'message': 'dead',
+      });
+      rig.sink!.success({'type': 'unheard-of'});
+      rig.sink!.success({'type': 'frame', 'id': 8, 'width': 'wide'});
+      rig.sink!.success({'type': 'frame', 'width': 1});
+      rig.sink!.success('nonsense');
+      await pumpEventQueue();
+      expect(got.map((e) => (e as ScanError).code), [
+        'camera_error',
+        'camera_error',
+        'malformed_event',
+        'malformed_event',
+        'malformed_event',
+      ]);
+      expect((got[1] as ScanError).message, 'dead');
+      expect(rig.released, [8]); // a frame with an id is always released
+      expect(rig.decoders.single.fed, isEmpty);
+    });
+  });
+
+  test('start before ParticleCode.init is a StateError', () async {
+    expect(ParticleCode.isInitialized, isFalse);
+    final rig = _Rig()..install();
+    final scanner = ParticleScanner(); // the real decoder
+    addTearDown(scanner.dispose);
+    await expectLater(
+      scanner.start(),
+      throwsA(
+        isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          contains('ParticleCode.init()'),
+        ),
+      ),
+    );
+    expect(rig.methods, isNot(contains('start')));
+  });
+
+  group('with the Rust decoder', () {
+    setUpAll(ParticleCode.init);
+
+    test(
+      'blank camera memory is rejected with a hint, read in place',
+      () async {
+        final rig = _Rig()..install();
+        const w = 64, h = 48, c = w * h ~/ 4;
+        final y = calloc<Uint8>(w * h);
+        final u = calloc<Uint8>(c);
+        final v = calloc<Uint8>(c);
+        addTearDown(() {
+          calloc.free(y);
+          calloc.free(u);
+          calloc.free(v);
+        });
+        y.asTypedList(w * h).fillRange(0, w * h, 128);
+        u.asTypedList(c).fillRange(0, c, 128);
+        v.asTypedList(c).fillRange(0, c, 128);
+        final scanner = ParticleScanner();
+        addTearDown(scanner.dispose);
+        final got = <ScanEvent>[];
+        scanner.events.listen(got.add);
+        await scanner.start();
+
+        rig.frame(
+          42,
+          width: w,
+          height: h,
+          yAddress: y.address,
+          yLen: w * h,
+          uAddress: u.address,
+          uLen: c,
+          vAddress: v.address,
+          vLen: c,
+          yStride: w,
+          uvStride: w ~/ 2,
+          uvPixelStride: 1,
+        );
+        await rig.waitForRelease(42); // the decode runs on the Rust thread pool
+        final f = got.single as ScanFrame;
+        expect(f.status, ScanStatus.rejected);
+        expect(f.locked, isFalse);
+        expect(f.hint, isNotNull);
+        expect(f.hintCode, isNot(ScanHint.none));
+        expect(f.anchors, isEmpty);
+        expect(rig.released, [42]);
+
+        // Inconsistent buffers are a rejection, not a crash.
+        rig.frame(
+          43,
+          width: w,
+          height: h,
+          yAddress: y.address,
+          yLen: 10,
+          uAddress: u.address,
+          uLen: 10,
+          vAddress: v.address,
+          vLen: 10,
+          yStride: w,
+          uvStride: w ~/ 2,
+          uvPixelStride: 1,
+        );
+        await rig.waitForRelease(43);
+        expect(rig.released, [42, 43]);
+
+        await scanner.stop();
+        expect(rig.methods.last, 'stop');
+      },
+    );
   });
 
   group('widgets', () {
@@ -545,23 +939,10 @@ void main() {
       tester,
     ) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.linux;
-      final messenger =
-          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-      late MockStreamHandlerEventSink sink;
-      messenger.setMockStreamHandler(
-        ParticleScanner.eventsChannel,
-        MockStreamHandler.inline(
-          onListen: (args, events) {
-            sink = events;
-          },
-        ),
-      );
-      addTearDown(
-        () =>
-            messenger.setMockStreamHandler(ParticleScanner.eventsChannel, null),
-      );
-      final scanner = ParticleScanner();
+      final rig = _Rig()..install();
+      final scanner = rig.scanner();
       addTearDown(scanner.dispose);
+      await scanner.start();
       ScanFrame? seen;
       await tester.pumpWidget(
         Directionality(
@@ -577,7 +958,18 @@ void main() {
       );
       expect(find.textContaining('not available'), findsOneWidget);
       expect(find.text('waiting'), findsOneWidget);
-      sink.success(_frameMap());
+      rig.next(
+        _result(
+          locked: true,
+          progress: const ProgressDto.accepted(
+            have: 12,
+            need: 40,
+            segmentsDone: 1,
+            segmentsTotal: 3,
+          ),
+        ),
+      );
+      rig.frame(1);
       await tester.pump();
       await tester.pump();
       expect(find.text('have 12'), findsOneWidget);
@@ -586,3 +978,177 @@ void main() {
     });
   });
 }
+
+// region test rig
+
+class _Clock {
+  DateTime _now = DateTime(2026);
+  DateTime call() => _now;
+  void advance(Duration d) => _now = _now.add(d);
+}
+
+FrameResultDto _result({
+  bool locked = false,
+  List<ImagePointDto> anchors = const [],
+  required ProgressDto progress,
+  String? hint,
+}) => FrameResultDto(
+  locked: locked,
+  profile: locked ? ProfileDto.m : null,
+  shapeId: locked ? 28 : null,
+  anchors: anchors,
+  sharpness: locked ? 2.5 : 0,
+  liveness: locked
+      ? const LivenessDto.read(seedLow: 9, rolling: 77, consistent: true)
+      : const LivenessDto.unknown(),
+  progress: progress,
+  hint: hint,
+);
+
+FrameResultDto _rejected(String reason, {String? hint}) => FrameResultDto(
+  locked: false,
+  anchors: const [],
+  sharpness: 0,
+  liveness: const LivenessDto.unknown(),
+  progress: ProgressDto.rejected(reason: reason),
+  rejectReason: reason,
+  hint: hint,
+);
+
+/// A scripted decoder: results come from a queue, `gate` holds a decode open.
+class _FakeDecoder implements FrameDecoder {
+  _FakeDecoder(this.queue);
+
+  final List<FrameResultDto> queue;
+  final List<CameraFrameDto> fed = [];
+  Completer<void>? gate;
+  Object? failWith;
+  Uint8List? ready;
+  int? session;
+  bool disposed = false;
+
+  @override
+  Future<FrameResultDto> feed(CameraFrameDto frame) async {
+    fed.add(frame);
+    await gate?.future;
+    final e = failWith;
+    if (e != null) throw e;
+    return queue.isEmpty ? _rejected('empty queue') : queue.removeAt(0);
+  }
+
+  @override
+  Uint8List? takeReady() {
+    final r = ready;
+    ready = null;
+    return r;
+  }
+
+  @override
+  int? sessionId() => session;
+
+  @override
+  void dispose() => disposed = true;
+}
+
+/// A fake platform: records method calls, and delivers events on the camera frames channel
+/// the way the engine does (a success envelope).
+class _Rig {
+  final messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  final List<MethodCall> calls = [];
+  final List<_FakeDecoder> decoders = [];
+  final List<FrameResultDto> results = [];
+  Object? Function(MethodCall) handler = (_) => null;
+  MockStreamHandlerEventSink? sink;
+  int listens = 0;
+  int cancels = 0;
+
+  List<String> get methods => [for (final c in calls) c.method];
+  List<int> get released => [
+    for (final c in calls)
+      if (c.method == 'releaseFrame') (c.arguments as Map)['id'] as int,
+  ];
+
+  void install() {
+    messenger.setMockMethodCallHandler(ParticleScanner.channel, (call) async {
+      calls.add(call);
+      return handler(call);
+    });
+    messenger.setMockStreamHandler(
+      ParticleScanner.framesChannel,
+      MockStreamHandler.inline(
+        onListen: (args, events) {
+          listens++;
+          sink = events;
+        },
+        onCancel: (args) {
+          cancels++;
+        },
+      ),
+    );
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(ParticleScanner.channel, null);
+      messenger.setMockStreamHandler(ParticleScanner.framesChannel, null);
+    });
+  }
+
+  ParticleScanner scanner({DateTime Function()? clock}) => ParticleScanner(
+    decoderFactory: () {
+      final d = _FakeDecoder(results);
+      decoders.add(d);
+      return d;
+    },
+    clock: clock,
+  );
+
+  /// Queues the result for the next decoded frame.
+  void next(FrameResultDto r) => results.add(r);
+
+  void frame(
+    int id, {
+    int width = 640,
+    int height = 480,
+    int yAddress = 1000,
+    int? yLen,
+    int uAddress = 5000,
+    int uLen = 3000,
+    int vAddress = 5001,
+    int vLen = 2999,
+    int yStride = 640,
+    int uvStride = 320,
+    int uvPixelStride = 2,
+    List<double> toPreview = const [1, 0, 0, 0, 1, 0],
+  }) {
+    final event = <String, Object?>{
+      'type': 'frame',
+      'id': id,
+      'width': width,
+      'height': height,
+      'yAddress': yAddress,
+      'yLen': yLen ?? width * height,
+      'uAddress': uAddress,
+      'uLen': uLen,
+      'vAddress': vAddress,
+      'vLen': vLen,
+      'yStride': yStride,
+      'uvStride': uvStride,
+      'uvPixelStride': uvPixelStride,
+      'toPreview': toPreview,
+    };
+    final data = const StandardMethodCodec().encodeSuccessEnvelope(event);
+    messenger.handlePlatformMessage(
+      ParticleScanner.framesChannel.name,
+      data,
+      (_) {},
+    );
+  }
+
+  Future<void> waitForRelease(int id) async {
+    for (var i = 0; i < 500 && !released.contains(id); i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(released, contains(id));
+  }
+}
+
+// endregion
