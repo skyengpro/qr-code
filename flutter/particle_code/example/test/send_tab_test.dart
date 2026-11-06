@@ -1,4 +1,4 @@
-// Runs the real Rust encoder through dart:ffi. Build the host library first:
+// Runs the real Rust encoder through flutter_rust_bridge. Build the host library first:
 //   cargo build -p particlecode-ffi
 // (or point $PARTICLECODE_LIB at it). The plugin finds target/debug by searching upward.
 import 'package:flutter/material.dart';
@@ -23,6 +23,7 @@ String _info(WidgetTester tester) =>
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(ParticleCode.init);
 
   final display = <bool>[];
 

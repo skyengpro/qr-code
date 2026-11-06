@@ -1,29 +1,32 @@
-import 'dart:ffi';
 import 'dart:io';
 
-import '../exception.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
+    show ExternalLibrary;
+
+import 'exception.dart';
 
 /// Environment variable naming the native library on desktop hosts and in tests.
 const String libraryEnvVar = 'PARTICLECODE_LIB';
 
-/// Opens the native Particle Code library for the current platform.
+/// Opens the native Particle Code library for the current platform, for
+/// `RustLib.init(externalLibrary: ...)`.
 ///
 /// * Android: `libparticlecode_jni.so` (built into the plugin's `jniLibs`; it exports the
-///   `pc_*` C functions as well as the JNI scanner entry points).
-/// * iOS: the symbols linked into the app by `ParticleCodeFFI.xcframework`
-///   (`DynamicLibrary.process()`).
+///   flutter_rust_bridge symbols as well as the JNI scanner entry points).
+/// * iOS: the symbols linked into the app by `ParticleCodeFFI.xcframework` (the process
+///   image).
 /// * Other hosts (tests, desktop): the file named by `$PARTICLECODE_LIB`, otherwise the
 ///   newest `target/{debug,release}/libparticlecode_ffi.{so,dylib}` found by searching
 ///   upwards from the working directory.
 ///
 /// Throws [ParticleCodeException] when nothing can be opened.
-DynamicLibrary openParticleLibrary() {
+ExternalLibrary openParticleLibrary() {
   try {
     if (Platform.isAndroid) {
-      return DynamicLibrary.open('libparticlecode_jni.so');
+      return ExternalLibrary.open('libparticlecode_jni.so');
     }
     if (Platform.isIOS) {
-      return DynamicLibrary.process();
+      return ExternalLibrary.process(iKnowHowToUseIt: true);
     }
     final path = findHostLibrary();
     if (path == null) {
@@ -32,7 +35,7 @@ DynamicLibrary openParticleLibrary() {
         '`cargo build -p particlecode-ffi` in the workspace.',
       );
     }
-    return DynamicLibrary.open(path);
+    return ExternalLibrary.open(path);
   } on ArgumentError catch (e) {
     throw ParticleCodeException(
       'cannot open particlecode library: ${e.message}',

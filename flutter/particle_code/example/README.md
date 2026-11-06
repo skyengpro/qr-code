@@ -42,7 +42,7 @@ cargo build -p particlecode-ffi   # host library for the encoder tests
 flutter test
 ```
 
-`test/send_tab_test.dart` drives the Send tab with the real encoder through `dart:ffi`.
+`test/send_tab_test.dart` drives the Send tab with the real encoder through flutter_rust_bridge (the test calls `ParticleCode.init()`; so does `main()`).
 `test/scan_tab_test.dart` mocks the plugin's platform channels.
 
 `tool/screenshot_test.dart` renders the picture above (`flutter test tool/screenshot_test.dart`),

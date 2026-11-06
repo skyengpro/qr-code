@@ -1,12 +1,12 @@
-// Runs the real Rust library on the host. Build it first:
+// Runs the real Rust library on the host through flutter_rust_bridge. Build it first:
 //   cargo build -p particlecode-ffi
 // (or point $PARTICLECODE_LIB at it).
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:particle_code/particle_code.dart';
-import 'package:particle_code/src/ffi/bindings.dart';
-import 'package:particle_code/src/ffi/library_loader.dart';
+import 'package:particle_code/src/native_library.dart';
 
 Uint8List _payload(int n) =>
     Uint8List.fromList([for (var i = 0; i < n; i++) (i * 31 + 7) & 0xFF]);
@@ -29,14 +29,15 @@ EncoderOptions _fixed({
 );
 
 void main() {
-  test('library is found and speaks the expected ABI', () {
+  setUpAll(ParticleCode.init);
+
+  test('library is found', () {
     expect(
       findHostLibrary(),
       isNotNull,
       reason: 'run cargo build -p particlecode-ffi',
     );
-    final b = ParticleBindings.instance;
-    expect(b.abiVersion(), expectedAbiVersion);
+    expect(ParticleCode.isInitialized, isTrue);
   });
 
   group('create', () {
@@ -269,6 +270,110 @@ void main() {
     });
   });
 
+  group('frameAsync', () {
+    test('equals frame for the same index and second', () async {
+      final enc = ParticleEncoder.create(_payload(500), options: _fixed());
+      addTearDown(enc.dispose);
+      for (final i in [0, 1, 7, enc.framesPerPass + 2]) {
+        final sync = enc.frame(i, unixSeconds: 1700000123);
+        final async = await enc.frameAsync(i, unixSeconds: 1700000123);
+        expect(async.sameAs(sync), isTrue, reason: 'frame $i at a second');
+        expect(
+          (await enc.frameAsync(i)).sameAs(enc.frame(i)),
+          isTrue,
+          reason: 'frame $i index-derived clock',
+        );
+      }
+    });
+
+    test('many calls in flight at once, completing independently', () async {
+      final enc = ParticleEncoder.create(
+        _payload(3000),
+        options: _fixed(profile: CodeProfile.l),
+      );
+      addTearDown(enc.dispose);
+      final futures = [
+        for (var i = 0; i < 32; i++) enc.frameAsync(i, unixSeconds: 1700000000),
+      ];
+      final frames = await Future.wait(futures);
+      for (var i = 0; i < frames.length; i++) {
+        expect(frames[i].index, i);
+        expect(frames[i].sameAs(enc.frame(i, unixSeconds: 1700000000)), isTrue);
+      }
+    });
+
+    test('disposing with calls in flight is safe', () async {
+      final enc = ParticleEncoder.create(
+        _payload(3000),
+        options: _fixed(profile: CodeProfile.l),
+      );
+      final futures = [
+        for (var i = 0; i < 16; i++) enc.frameAsync(i, unixSeconds: 1700000000),
+      ];
+      enc.dispose();
+      expect(enc.isDisposed, isTrue);
+      // The calls that were already started still complete with their frames.
+      final frames = await Future.wait(futures);
+      expect([for (final f in frames) f.index], List.generate(16, (i) => i));
+      await expectLater(enc.frameAsync(0), throwsStateError);
+      expect(() => enc.frame(0), throwsStateError);
+    });
+
+    test('argument checks', () async {
+      final enc = ParticleEncoder.create(_payload(10), options: _fixed());
+      addTearDown(enc.dispose);
+      await expectLater(enc.frameAsync(-1), throwsRangeError);
+      await expectLater(enc.frameAsync(0, unixSeconds: -5), throwsRangeError);
+    });
+  });
+
+  group('FrameSpec.fromDto matches fromJson', () {
+    for (final profile in CodeProfile.values) {
+      test('profile ${profile.letter}', () {
+        final enc = ParticleEncoder.create(
+          _payload(9000),
+          options: _fixed(
+            profile: profile,
+            segmentKbLog2: 1,
+            shape: Shape.heart.preferred,
+          ),
+        );
+        addTearDown(enc.dispose);
+        expect(enc.info.segmentCount, greaterThan(1));
+        for (final i in [0, 1, enc.framesPerPass - 1, enc.framesPerPass + 5]) {
+          final a = enc.frame(i, unixSeconds: 1700000042);
+          final b = FrameSpec.fromJson(
+            jsonDecode(enc.frameJson(i, unixSeconds: 1700000042))
+                as Map<String, Object?>,
+          );
+          _expectSameFrame(a, b);
+          expect(a.sameAs(b), isTrue);
+        }
+      });
+    }
+
+    test('static frames', () {
+      final enc = ParticleEncoder.create(
+        _payload(200),
+        options: EncoderOptions(
+          isStatic: true,
+          sessionId: 5,
+          key: _key,
+          clockOriginUnix: 1700000000,
+        ),
+      );
+      addTearDown(enc.dispose);
+      final a = enc.frame(0);
+      expect(a.header.isStatic, isTrue);
+      _expectSameFrame(
+        a,
+        FrameSpec.fromJson(
+          jsonDecode(enc.frameJson(0)) as Map<String, Object?>,
+        ),
+      );
+    });
+  });
+
   group('liveness', () {
     test('verify accepts the encoder clock and rejects others', () {
       final enc = ParticleEncoder.create(_payload(200), options: _fixed());
@@ -288,7 +393,7 @@ void main() {
   });
 
   group('options json', () {
-    test('defaults mirror the C ABI config', () {
+    test('defaults mirror the Rust config', () {
       final j = const EncoderOptions().toJson();
       expect(j['profile'], 'M');
       expect(j['shape'], {'kind': 'require', 'id': 0});
@@ -342,4 +447,61 @@ void main() {
       expect(Shape.heart.preferred.toJson(), {'kind': 'prefer', 'id': 28});
     });
   });
+}
+
+void _expectSameFrame(FrameSpec a, FrameSpec b) {
+  expect(a.index, b.index);
+  expect(a.profile, b.profile);
+  expect(a.frameHalfSide, b.frameHalfSide);
+  expect(a.particleBand.inner, b.particleBand.inner);
+  expect(a.particleBand.outer, b.particleBand.outer);
+  final (h, g) = (a.header, b.header);
+  expect(h.shapeTableVersion, g.shapeTableVersion);
+  expect(h.profile, g.profile);
+  expect(h.palette, g.palette);
+  expect(h.palette, 'Hues4');
+  expect(h.isStatic, g.isStatic);
+  expect(h.shapeId, g.shapeId);
+  expect(h.sessionId, g.sessionId);
+  expect(h.payloadLen, g.payloadLen);
+  expect(h.segmentKbLog2, g.segmentKbLog2);
+  expect(h.segmentIndex, g.segmentIndex);
+  expect(h.packetSeed, g.packetSeed);
+
+  expect(a.anchors.length, b.anchors.length);
+  for (var i = 0; i < a.anchors.length; i++) {
+    final (x, y) = (a.anchors[i], b.anchors[i]);
+    expect(x.at, y.at);
+    expect(x.coreR, y.coreR);
+    expect(x.ringIn, y.ringIn);
+    expect(x.ringOut, y.ringOut);
+    expect(x.pupilR, y.pupilR);
+  }
+  expect(a.swatches.length, b.swatches.length);
+  for (var i = 0; i < a.swatches.length; i++) {
+    final (x, y) = (a.swatches[i], b.swatches[i]);
+    expect(x.at, y.at);
+    expect(x.color, y.color);
+    expect(x.anchor, y.anchor);
+    expect(x.slot, y.slot);
+  }
+  expect(a.particles.length, b.particles.length);
+  for (var i = 0; i < a.particles.length; i++) {
+    expect(a.particles[i].sector, b.particles[i].sector);
+    expect(a.particles[i].angle, b.particles[i].angle);
+  }
+  for (final (x, y) in [(a.headerDots, b.headerDots), (a.dots, b.dots)]) {
+    expect(x.length, y.length);
+    expect(x.q, y.q);
+    expect(x.r, y.r);
+    expect(x.x, y.x);
+    expect(x.y, y.y);
+    expect(x.color, y.color);
+    expect(x.size, y.size);
+  }
+  // Data dots have real lattice coordinates, not all zero.
+  expect(a.dots.q.any((q) => q != 0) || a.dots.r.any((r) => r != 0), isTrue);
+  // Swatches cover all three kinds and all three halos.
+  expect(a.swatches.map((s) => s.color.kind).toSet().length, 3);
+  expect(a.swatches.map((s) => s.anchor).toSet(), {0, 1, 2});
 }
