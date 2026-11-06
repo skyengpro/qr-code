@@ -2,7 +2,7 @@
 
 Swift plugin (iOS 15+) over `apple/ParticleCodeKit`: an `AVCaptureSession` feeds camera frames to
 the Rust decoder in place, a platform view shows the preview, and the sender is reached from Dart
-through `dart:ffi`. The channel contract is `../PROTOCOL.md`.
+through flutter_rust_bridge (over `dart:ffi`). The channel contract is `../PROTOCOL.md`.
 
 ## Build steps
 
@@ -62,18 +62,24 @@ The app's `Info.plist` needs a camera explanation, or iOS kills the app when the
 
 ## Why the symbol keeper
 
-Dart calls the `pc_encoder_*` functions with `DynamicLibrary.process()`, so no native code
-references them. A static library is linked lazily (`-lparticlecode_ffi` loads only members that
+Dart finds the flutter_rust_bridge entry points with `DynamicLibrary.process()`, so no native
+code references them. A static library is linked lazily (`-lparticlecode_ffi` loads only members that
 resolve an undefined symbol), and release builds run `-dead_strip`. Left alone, the encoder would
 be missing and the Dart lookup would fail at run time, in release builds only.
 
-* **`SymbolKeeper.swift`** references every `pc_*` function from code reachable from
-  `register(with:)` (behind a flag the compiler cannot fold, so nothing is called). References
-  from live code survive both lazy loading and `-dead_strip`, and need no linker flags. Keep it
-  in step with `particlecode.h`; `tool/check-symbols.sh` fails when a function is missing, and
-  CI checks that the built app (debug and release) has every `pc_*` as a global symbol.
+* **`frb_keep.rs`** (in `particlecode-ffi`) is a `#[used]` table of every bridge symbol Dart
+  looks up (the flutter_rust_bridge runtime plus the generated `frbgen_*` functions);
+  `#[used]` makes it no-dead-strip, and `pc_abi_version()` reads it, so linking that function
+  links the table and everything it names. A Rust test fails when regenerated bindings look up a
+  symbol the table lacks.
+* **`SymbolKeeper.swift`** calls `pc_abi_version()` from `register(with:)` and references every
+  other `pc_*` function from code reachable from it (behind a flag the compiler cannot fold, so
+  nothing is called). References from live code survive both lazy loading and `-dead_strip`,
+  and need no linker flags. Keep it in step with `particlecode.h`; `tool/check-symbols.sh`
+  fails when a function is missing. CI checks that the built app (debug and release) has every
+  `pc_*` and bridge symbol as a global symbol.
 * **Strip Style "Non-Global Symbols"** must be the host app's setting, so `strip` leaves the
-  global `pc_*` symbols that `dlsym` looks for. With CocoaPods the podspec sets it
+  global symbols that `dlsym` looks for. With CocoaPods the podspec sets it
   (`user_target_xcconfig`). A Swift package cannot change the app's build settings, so with
   SwiftPM set `STRIP_STYLE = non-global` on the Runner target's Release and Profile
   configurations yourself (the example app does).

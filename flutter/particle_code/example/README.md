@@ -29,7 +29,7 @@ flutter run            # on a phone: the simulator and emulator have no camera
 
 The iOS deployment target is 15.0, the lowest Flutter 3.47 accepts (it rewrites anything
 lower), and the plugin's minimum too. The Release configuration sets
-`STRIP_STYLE = non-global` so the `pc_*` functions that only Dart calls survive stripping.
+`STRIP_STYLE = non-global` so the Rust functions that only Dart calls survive stripping.
 
 On iOS the app builds through Swift Package Manager (Flutter's default) and has no Podfile: its
 Xcode project carries Flutter's SwiftPM integration. Apps still on CocoaPods use the plugin's
@@ -46,5 +46,5 @@ flutter test
 `test/scan_tab_test.dart` mocks the plugin's platform channels.
 
 `tool/screenshot_test.dart` renders the picture above (`flutter test tool/screenshot_test.dart`),
-and `tool/check_ios_symbols.sh` is the CI check that a built iOS app contains the `dart:ffi`
-symbols.
+and `tool/check_ios_symbols.sh` is the CI check that a built iOS app contains the symbols Dart
+looks up (the flutter_rust_bridge entry points) and the `pc_*` C ABI.

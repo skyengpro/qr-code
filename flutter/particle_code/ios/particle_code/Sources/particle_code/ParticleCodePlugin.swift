@@ -16,7 +16,7 @@ public final class ParticleCodePlugin: NSObject, FlutterPlugin {
     private let events = ScanEventStreamHandler()
 
     public static func register(with registrar: FlutterPluginRegistrar) {
-        // Keeps the `pc_*` C functions alive for dart:ffi (see SymbolKeeper.swift).
+        // Keeps the Rust entry points Dart looks up alive in the link (see SymbolKeeper.swift).
         ParticleCodeSymbols.keep()
 
         let messenger = registrar.messenger()
