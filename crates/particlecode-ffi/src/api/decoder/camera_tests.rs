@@ -16,6 +16,17 @@ fn run(data: &[u8], mut feed: impl FnMut(&mut ParticleDecoder, u32) -> FrameResu
         assert!(r.locked, "frame {i}: not locked: {:?}", r.reject_reason);
         assert!(r.anchors.len() >= 3);
         assert!(r.sharpness > 0.0);
+        assert_eq!(r.reject_stage, None);
+        assert_eq!(r.reject_category, None);
+        let t = r.timings;
+        assert!(t.validate_us.is_some() && t.locate_us.is_some());
+        assert!(t.read_us.is_some() && t.receive_us.is_some());
+        let stages: u32 = [t.validate_us, t.locate_us, t.read_us, t.receive_us]
+            .into_iter()
+            .flatten()
+            .sum();
+        assert!(t.total_us >= stages.saturating_sub(4), "{t:?}");
+        assert!(r.packet.is_some());
         assert_eq!(r.profile, Some(ProfileDto::M));
         assert_eq!(r.shape_id, Some(0));
         assert!(
@@ -160,7 +171,31 @@ fn unusable_frames_are_rejections_with_hints() {
         dec.feed_rgba(10, 10, vec![0; 5]),
         dec.feed_rgba(u32::MAX, u32::MAX, vec![]),
     ];
-    for r in cases {
+    let expected = [
+        (RejectStageDto::Locate, RejectCategoryDto::NoLock),
+        (RejectStageDto::Locate, RejectCategoryDto::NoLock),
+        (RejectStageDto::Buffers, RejectCategoryDto::InvalidBuffers),
+        (RejectStageDto::Buffers, RejectCategoryDto::InvalidBuffers),
+        (RejectStageDto::Buffers, RejectCategoryDto::InvalidBuffers),
+        (RejectStageDto::Buffers, RejectCategoryDto::InvalidBuffers),
+        (RejectStageDto::Buffers, RejectCategoryDto::InvalidBuffers),
+        (RejectStageDto::Buffers, RejectCategoryDto::InvalidBuffers),
+        (RejectStageDto::Buffers, RejectCategoryDto::InvalidBuffers),
+        (RejectStageDto::Buffers, RejectCategoryDto::InvalidBuffers),
+    ];
+    assert_eq!(cases.len(), expected.len());
+    for (r, (stage, category)) in cases.into_iter().zip(expected) {
+        assert_eq!(r.reject_stage, Some(stage));
+        assert_eq!(r.reject_category, Some(category));
+        assert_eq!(r.packet, None);
+        assert!(r.timings.validate_us.is_some());
+        if stage == RejectStageDto::Buffers {
+            assert_eq!((r.timings.locate_us, r.timings.read_us), (None, None));
+        } else {
+            assert!(r.timings.locate_us.is_some());
+            assert_eq!(r.timings.read_us, None);
+        }
+        assert_eq!(r.timings.receive_us, None);
         assert!(!r.locked);
         assert!(r.anchors.is_empty());
         assert_eq!(r.liveness, LivenessDto::Unknown);
@@ -170,6 +205,58 @@ fn unusable_frames_are_rejections_with_hints() {
         assert_ne!(r.hint_code, HintDto::None);
     }
     assert_eq!(dec.session_id(), None);
+}
+
+#[test]
+fn packet_is_distinct_for_a_first_copy_and_not_for_a_repeated_frame() {
+    let data = payload(2600);
+    let enc = encoder(&data);
+    let mut dec = ParticleDecoder::new();
+    let img = camera_rgb(&enc, 0, SIZE_PX);
+    let first = dec.feed_rgba(img.width, img.height, rgba(&img));
+    let again = dec.feed_rgba(img.width, img.height, rgba(&img));
+    let p1 = first.packet.expect("header was read");
+    let p2 = again.packet.expect("header was read");
+    assert!(p1.distinct && !p2.distinct, "{p1:?} {p2:?}");
+    assert_eq!(
+        (p1.segment_index, p1.packet_seed),
+        (p2.segment_index, p2.packet_seed)
+    );
+    assert_eq!((first.reject_stage, again.reject_stage), (None, None));
+    let next = camera_rgb(&enc, 1, SIZE_PX);
+    let other = dec.feed_rgba(next.width, next.height, rgba(&next));
+    let p3 = other.packet.expect("header was read");
+    assert!(p3.distinct);
+    assert_ne!(p3.packet_seed, p1.packet_seed);
+}
+
+#[test]
+fn receiver_rejections_name_their_stage_and_category() {
+    use crate::api::dto::EncoderConfig;
+    use crate::api::encoder::ParticleEncoder;
+    let mut dec = ParticleDecoder::new();
+    let img = camera_rgb(&encoder(&payload(2600)), 0, SIZE_PX);
+    assert!(
+        dec.feed_rgba(img.width, img.height, rgba(&img))
+            .packet
+            .is_some()
+    );
+    // Another transfer (different session id) into the same decoder.
+    let other = ParticleEncoder::new(
+        payload(2600),
+        EncoderConfig {
+            session_id: Some(0x1234),
+            ..EncoderConfig::default()
+        },
+    )
+    .unwrap();
+    let img = camera_rgb(&other, 0, SIZE_PX);
+    let r = dec.feed_rgba(img.width, img.height, rgba(&img));
+    assert_eq!(r.reject_stage, Some(RejectStageDto::Receiver));
+    assert_eq!(r.reject_category, Some(RejectCategoryDto::OtherSession));
+    let packet = r.packet.expect("header was read");
+    assert!(!packet.distinct);
+    assert!(r.timings.receive_us.is_some());
 }
 
 #[test]

@@ -20,6 +20,7 @@ FrameResultDto _frame({
   String? hint,
   bool consistent = true,
 }) => FrameResultDto(
+  timings: const DecodeTimingsDto(totalUs: 1),
   locked: locked,
   profile: ProfileDto.m,
   shapeId: 0,
@@ -42,6 +43,7 @@ FrameResultDto _frame({
 
 FrameResultDto _done(Uint8List payload, {bool consistent = true}) =>
     FrameResultDto(
+      timings: const DecodeTimingsDto(totalUs: 1),
       locked: true,
       profile: ProfileDto.m,
       shapeId: 0,
