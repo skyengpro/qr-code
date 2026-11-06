@@ -84,7 +84,7 @@ crates/particlecode-shapes   shape tool: SVG path -> lattice bitmaps, rule check
 crates/particlecode-cli      the `particlecode` command
 crates/particlecode-ffi      the plugin's Rust side: flutter_rust_bridge API (encoder, decoder over camera frames)
 flutter/particle_code/       Flutter plugin for Android and iOS (Rust built by a Native Assets hook)
-examples/                    Rust examples, sample CBOR payloads, flutter-demo/ (the Flutter demo app)
+examples/                    Rust examples, sample CBOR payloads, flutter-demo/ (demo app), hardware-spike/ (benchmark app)
 fuzz/                        cargo-fuzz target for the header decoder
 ```
 

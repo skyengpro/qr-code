@@ -2,6 +2,9 @@
 
 * [`flutter-demo/`](flutter-demo/README.md): the Flutter demo app (Send and Scan tabs) over the
   `particle_code` plugin. `cd examples/flutter-demo && flutter run` on a phone.
+* [`hardware-spike/`](hardware-spike/README.md): a benchmark app that records repeatable
+  sender/receiver trials with typed scanner diagnostics, keeps them across restarts, and
+  exports/sends a JSON + CSV report bundle (issue #11).
 * The Rust examples below.
 
 ## Rust

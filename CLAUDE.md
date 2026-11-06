@@ -20,7 +20,7 @@ crates/particlecode-shapes   shape tool (SVG path -> lattice bitmaps, checks, va
 crates/particlecode-cli      `particlecode` binary + examples/
 crates/particlecode-ffi      flutter_rust_bridge API (generated: src/frb_generated.rs); built by the plugin's hook
 flutter/particle_code        Flutter plugin: Dart sender + scanner, native camera, hook/build.dart (Native Assets)
-examples/                    Rust examples, sample payloads, flutter-demo/ (Flutter demo app); see examples/README.md
+examples/                    Rust examples, sample payloads, flutter-demo/ (demo app), hardware-spike/ (benchmark app)
 docs/                        spec, design notes, README images
 ```
 
