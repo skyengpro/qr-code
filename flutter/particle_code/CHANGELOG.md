@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+* The demo app moved from `example/` to `examples/flutter-demo/` at the repository root.
 * The sender now uses flutter_rust_bridge 2.13 (generated bindings in `lib/src/rust/`)
   instead of hand-written `dart:ffi`, JSON and a worker isolate.
 * **Breaking:** call `await ParticleCode.init()` once (for example in `main()`) before

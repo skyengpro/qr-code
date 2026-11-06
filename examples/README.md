@@ -1,5 +1,11 @@
 # Examples
 
+* [`flutter-demo/`](flutter-demo/README.md): the Flutter demo app (Send and Scan tabs) over the
+  `particle_code` plugin. `cd examples/flutter-demo && flutter run` on a phone.
+* The Rust examples below.
+
+## Rust
+
 Runnable end-to-end examples of the encoder side. They are Cargo examples of the
 `particlecode-cli` crate, so they share its dependencies and the helpers in
 `particlecode_cli` (sample payloads, session builder, contact sheets).
