@@ -3,10 +3,12 @@ package com.vaam.particlecode.flutter
 import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
+import android.graphics.ImageFormat
 import android.graphics.Matrix
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.util.Size
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.CameraState
@@ -14,9 +16,11 @@ import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.SurfaceOrientedMeteringPointFactory
 import androidx.camera.core.UseCase
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
@@ -24,40 +28,33 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.Observer
 import com.google.common.util.concurrent.ListenableFuture
-import com.vaam.particlecode.Hint
-import com.vaam.particlecode.CodeProfile
-import com.vaam.particlecode.Liveness
-import com.vaam.particlecode.ParticleAnalyzer
-import com.vaam.particlecode.ParticleCodeException
-import com.vaam.particlecode.ParticleScanner
-import com.vaam.particlecode.Progress
-import com.vaam.particlecode.ScanResult
 import io.flutter.plugin.common.MethodChannel
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * One camera scan: CameraX preview and analysis bound to the activity, a native decoder
- * ([ParticleScanner]) fed on a single background thread, and the events sent to Dart.
+ * One camera run: CameraX preview and analysis bound to the activity. Each analysis frame that
+ * finds the [FrameStore] empty is kept open and announced to Dart as a `frame` event with its
+ * plane addresses; Dart decodes it (Rust, in place) and calls `releaseFrame`.
  *
- * All methods except the analyzer callbacks run on the main thread. Camera frames never leave the
- * analyzer thread; only the small event maps cross to Dart.
+ * All methods except the analyzer run on the main thread.
  *
- * Lifecycle: [start] binds, [stop] unbinds and releases everything (the session is dead after
- * that), [detachActivity] / [attachActivity] bridge an activity change (rotation, theme) keeping the decoder and
- * its progress, [reset] swaps in a fresh decoder while the camera keeps running.
+ * Lifecycle: [start] binds, [stop] unbinds and releases the camera (the session is dead after
+ * that; an in-flight frame stays in the [FrameStore] until released), [detachActivity] /
+ * [attachActivity] bridge an activity change (rotation, theme).
  */
 internal class ScannerSession(
     private var activity: Activity,
-    private val events: ScanEvents,
+    private val events: CameraEvents,
     private val previews: PreviewRegistry,
+    private val frames: FrameStore,
 ) {
     private enum class State { IDLE, STARTING, RUNNING, CLOSED }
 
     private val main = Handler(Looper.getMainLooper())
 
-    // The only thread that touches the decoder. Shut down in [stop], after the decoder is closed.
+    // Runs the analyzer. Shut down in [stop].
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { r ->
         Thread(r, "particlecode-analysis").apply { isDaemon = true }
     }
@@ -67,16 +64,15 @@ internal class ScannerSession(
     private var torch = false
     private val startWaiters = ArrayList<MethodChannel.Result>()
 
-    private var pipeline: Pipeline? = null
     private var provider: ProcessCameraProvider? = null
     private var camera: Camera? = null
     private var preview: Preview? = null
     private var analysis: ImageAnalysis? = null
     private var cameraStates: LiveData<CameraState>? = null
 
-    /** Written on the analyzer thread, read by the periodic refocus. */
+    /** Set by [stop]; analyzer callbacks that still arrive close their frames. */
     @Volatile
-    private var locked = false
+    private var closed = false
 
     private val stateObserver = Observer<CameraState> { cameraState ->
         val code = cameraState.error?.code ?: return@Observer
@@ -85,22 +81,14 @@ internal class ScannerSession(
             code == CameraState.ERROR_CAMERA_FATAL_ERROR ||
             code == CameraState.ERROR_DO_NOT_DISTURB_MODE_ENABLED
         ) {
-            events.emit(
-                mapOf(
-                    "type" to "error",
-                    "code" to "camera_error",
-                    "message" to "camera error $code",
-                ),
-            )
+            events.error("camera_error", "camera error $code")
         }
     }
 
     private val refocus = object : Runnable {
         override fun run() {
             val cam = camera ?: return
-            if (!locked) {
-                ParticleAnalyzer.refocusCenter(cam.cameraControl)
-            }
+            refocusCenter(cam)
             main.postDelayed(this, REFOCUS_INTERVAL_MS)
         }
     }
@@ -139,11 +127,8 @@ internal class ScannerSession(
             result.error("camera_error", "the host activity is not a LifecycleOwner", null)
             return
         }
-        try {
-            if (pipeline == null) pipeline = Pipeline()
-        } catch (t: Throwable) {
-            // Typically UnsatisfiedLinkError: libparticlecode_jni.so is missing for this ABI.
-            result.error("camera_error", "could not create the decoder: $t", null)
+        if (!DirectBuffers.available) {
+            result.error("camera_error", "libparticle_code_jni.so could not be loaded", null)
             return
         }
         state = State.STARTING
@@ -157,34 +142,18 @@ internal class ScannerSession(
         future.addListener({ onProvider(future) }, ContextCompat.getMainExecutor(activity))
     }
 
-    /** Unbind and release everything. The session cannot be started again. */
+    /**
+     * Unbind and release the camera. The session cannot be started again. A frame in flight stays
+     * in the [FrameStore] until Dart releases it (or the next `start`).
+     */
     fun stop() {
         if (state == State.CLOSED) return
         val wasStarting = state == State.STARTING
         state = State.CLOSED
+        closed = true
         if (wasStarting) completeWaitersWithError("camera_error", "start was cancelled by stop")
         unbindUseCases()
-        pipeline?.let { retire(it) }
-        pipeline = null
-        events.clearPending()
-        // Runs after the decoder-closing task queued by retire(); nothing is left to leak.
         executor.shutdown()
-    }
-
-    /** A fresh decoder, the camera keeps running. Drops all progress. */
-    fun reset() {
-        if (state == State.CLOSED) return
-        val old = pipeline ?: return
-        val fresh = try {
-            Pipeline()
-        } catch (t: Throwable) {
-            Log.w(TAG, "reset: could not create a decoder", t)
-            return
-        }
-        pipeline = fresh
-        analysis?.setAnalyzer(executor, fresh.analyzer)
-        retire(old)
-        events.clearPending()
     }
 
     /** Switch the torch. Returns whether the camera has one (false when not running). */
@@ -218,7 +187,7 @@ internal class ScannerSession(
         preview?.setSurfaceProvider(previews.current?.surfaceProvider)
     }
 
-    /** The activity is being replaced (configuration change): unbind, keep the decoder. */
+    /** The activity is being replaced (configuration change): unbind. */
     fun detachActivity() {
         if (suspended) return
         suspended = true
@@ -236,7 +205,7 @@ internal class ScannerSession(
             bind(p)
         } catch (t: Exception) {
             Log.w(TAG, "could not rebind the camera", t)
-            events.emit(mapOf("type" to "error", "code" to "camera_error", "message" to t.toString()))
+            events.error("camera_error", t.toString())
         }
     }
 
@@ -287,7 +256,6 @@ internal class ScannerSession(
     private fun bind(p: ProcessCameraProvider) {
         val owner = activity as? LifecycleOwner
             ?: throw IllegalStateException("the host activity is not a LifecycleOwner")
-        val current = pipeline ?: throw IllegalStateException("no decoder")
 
         // The preview shares the analysis' 16:9 so that both show the same part of the sensor.
         val newPreview = Preview.Builder()
@@ -298,8 +266,8 @@ internal class ScannerSession(
             )
             .build()
         newPreview.setSurfaceProvider(previews.current?.surfaceProvider)
-        val newAnalysis = ParticleAnalyzer.newImageAnalysis()
-        newAnalysis.setAnalyzer(executor, current.analyzer)
+        val newAnalysis = newImageAnalysis()
+        newAnalysis.setAnalyzer(executor, analyzer)
 
         val cam = try {
             p.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, newPreview, newAnalysis)
@@ -313,7 +281,7 @@ internal class ScannerSession(
         camera = cam
 
         applyTorch(cam)
-        ParticleAnalyzer.refocusCenter(cam.cameraControl)
+        refocusCenter(cam)
         main.removeCallbacks(refocus)
         main.postDelayed(refocus, REFOCUS_INTERVAL_MS)
 
@@ -364,134 +332,106 @@ internal class ScannerSession(
         waiting.forEach { it.error(code, message, null) }
     }
 
-    /** Stop using [p]; its decoder is closed on the analyzer thread after any frame in flight. */
-    private fun retire(p: Pipeline) {
-        p.closed = true
+    private fun newImageAnalysis(): ImageAnalysis {
+        val selector = ResolutionSelector.Builder()
+            .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+            .setResolutionStrategy(
+                ResolutionStrategy(TARGET_SIZE, ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER),
+            )
+            .build()
+        return ImageAnalysis.Builder()
+            .setResolutionSelector(selector)
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+            .build()
+    }
+
+    /**
+     * One-shot autofocus and auto-exposure on the image center, then back to continuous AF. The
+     * code is read from a phone screen at close range, where continuous AF can hunt.
+     */
+    private fun refocusCenter(cam: Camera) {
         try {
-            executor.execute { p.scanner.close() }
-        } catch (e: java.util.concurrent.RejectedExecutionException) {
-            p.scanner.close()
+            val point = SurfaceOrientedMeteringPointFactory(1f, 1f).createPoint(0.5f, 0.5f)
+            val action = FocusMeteringAction.Builder(
+                point,
+                FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE,
+            )
+                .setAutoCancelDuration(AUTO_CANCEL_SECONDS, TimeUnit.SECONDS)
+                .build()
+            cam.cameraControl.startFocusAndMetering(action)
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "refocus failed", e)
         }
     }
 
     // endregion
 
-    // region analysis
+    // region frames
 
-    /** A decoder plus its analyzer, and the state needed to turn its results into events. */
-    private inner class Pipeline : ParticleAnalyzer.Listener {
-        val scanner = ParticleScanner()
-        val analyzer = ParticleAnalyzer(scanner, this)
+    /** Analyzer thread. Keeps the frame open and announces it, or closes it. */
+    private val analyzer = ImageAnalysis.Analyzer { image -> onFrame(image) }
 
-        /** Set on the main thread by [retire]; stale results are then dropped. */
-        @Volatile
-        var closed = false
-
-        // Analyzer thread only. Sticky across rejected frames, as the protocol says.
-        private var have = 0
-        private var need = 0
-        private var segmentsDone = 0
-        private var segmentsTotal = 0
-
-        override fun onResult(result: ScanResult) = Unit
-
-        override fun onResult(result: ScanResult, image: ImageProxy) {
-            if (closed) return
-            locked = result.locked
-
-            var status = "rejected"
-            var rejectReason: String? = null
-            var payload: ByteArray? = null
-            when (val progress = result.progress) {
-                is Progress.Accepted -> {
-                    status = "accepted"
-                    have = progress.have
-                    need = progress.need
-                    segmentsDone = progress.segmentsDone
-                    segmentsTotal = progress.segmentsTotal
-                }
-                is Progress.Done -> {
-                    status = "done"
-                    payload = progress.payload
-                    if (need > 0) have = need
-                    if (segmentsTotal > 0) segmentsDone = segmentsTotal
-                }
-                is Progress.Rejected -> rejectReason = progress.reason
+    private fun onFrame(image: ImageProxy) {
+        if (closed) {
+            image.close()
+            return
+        }
+        val id = frames.offer(image) // closes the image when a frame is already in flight
+        if (id < 0) return
+        try {
+            val planes = image.planes
+            if (image.format != ImageFormat.YUV_420_888 || planes.size != 3) {
+                throw IllegalStateException("unexpected image format ${image.format}")
             }
-
-            val ready: ByteArray? = try {
-                scanner.takeReady()
-            } catch (e: IllegalStateException) {
-                null // closed while we worked
-            }
-            val sessionId = if (payload != null) (scanner.sessionId ?: -1) else -1
-
-            val frame = HashMap<String, Any?>(16)
-            frame["type"] = "frame"
-            frame["status"] = status
-            frame["locked"] = result.locked
-            frame["profile"] = when (result.profile) {
-                CodeProfile.S -> 0
-                CodeProfile.M -> 1
-                CodeProfile.L -> 2
-                null -> -1
-            }
-            frame["shapeId"] = result.shapeId ?: -1
-            frame["have"] = have
-            frame["need"] = need
-            frame["segmentsDone"] = segmentsDone
-            frame["segmentsTotal"] = segmentsTotal
-            frame["liveness"] = when (val l = result.liveness) {
-                is Liveness.Read -> mapOf(
-                    "consistent" to l.consistent,
-                    "seedLow" to l.seedLow,
-                    "rolling" to l.rolling,
-                )
-                is Liveness.Unknown -> null
-            }
-            frame["sharpness"] = result.sharpness.toDouble()
-            frame["hint"] = result.hintText
-            frame["hintCode"] = hintCode(result.hint)
-            frame["rejectReason"] = rejectReason
-
-            // Anchor mapping needs the view (main thread) and this frame's geometry (valid only
-            // inside this call), so capture the geometry now and map on the main thread.
-            val raw = FloatArray(result.anchors.size * 2)
-            result.anchors.forEachIndexed { i, a ->
-                raw[2 * i] = a.x
-                raw[2 * i + 1] = a.y
-            }
-            val geometry = if (raw.isNotEmpty()) {
-                FrameGeometry(
-                    width = image.width,
-                    height = image.height,
-                    rotationDegrees = image.imageInfo.rotationDegrees,
-                    sensorToBuffer = Matrix(image.imageInfo.sensorToBufferTransformMatrix),
-                )
-            } else {
-                null
-            }
-
-            val donePayload: ByteArray? = payload
+            val y = planes[0].buffer
+            val u = planes[1].buffer
+            val v = planes[2].buffer
+            val info = image.imageInfo
+            val event = HashMap<String, Any?>(16)
+            event["type"] = "frame"
+            event["id"] = id
+            event["width"] = image.width
+            event["height"] = image.height
+            event["yAddress"] = DirectBuffers.readableAddress(y)
+            event["yLen"] = y.remaining()
+            event["uAddress"] = DirectBuffers.readableAddress(u)
+            event["uLen"] = u.remaining()
+            event["vAddress"] = DirectBuffers.readableAddress(v)
+            event["vLen"] = v.remaining()
+            event["yStride"] = planes[0].rowStride
+            event["uvStride"] = planes[1].rowStride
+            event["uvPixelStride"] = planes[1].pixelStride
+            val geometry = FrameGeometry(
+                width = image.width,
+                height = image.height,
+                rotationDegrees = info.rotationDegrees,
+                sensorToBuffer = Matrix(info.sensorToBufferTransformMatrix),
+            )
+            events.post { emitFrame(id, event, geometry) }
+        } catch (t: Throwable) {
+            Log.w(TAG, "could not read a camera frame", t)
             events.post {
-                if (closed) return@post
-                frame["anchors"] = mapAnchors(raw, geometry)
-                events.emit(frame)
-                if (ready != null && ready.isNotEmpty()) {
-                    events.emit(mapOf("type" to "segment", "bytes" to ready))
-                }
-                if (donePayload != null) {
-                    events.emitDone(
-                        mapOf("type" to "done", "payload" to donePayload, "sessionId" to sessionId),
-                    )
-                }
+                frames.release(id)
+                events.error("camera_error", "could not read a camera frame: $t")
             }
         }
+    }
 
-        override fun onError(error: Throwable) {
-            // Bad frames are normal in the first moments; a native panic is a bug worth a log.
-            if (error is ParticleCodeException) Log.w(TAG, "decoder error ${error.code}: ${error.message}")
+    /**
+     * Main thread. Adds `toPreview` and sends the event. If the frame was released meanwhile
+     * (a new `start`), nothing is sent: Dart must never see an id that is no longer valid. If
+     * nobody listens, the frame is released at once.
+     */
+    private fun emitFrame(id: Long, event: HashMap<String, Any?>, geometry: FrameGeometry) {
+        if (!frames.isHeld(id)) return
+        try {
+            event["toPreview"] = toPreview(geometry).map { it.toDouble() }
+            if (events.emit(event)) return
+        } catch (t: Throwable) {
+            Log.w(TAG, "could not send a camera frame", t)
         }
+        frames.release(id)
     }
 
     /** What the analyzer thread knows about one frame, copied out of the [ImageProxy]. */
@@ -503,31 +443,31 @@ internal class ScannerSession(
     )
 
     /**
-     * Anchors (x0, y0, x1, y1, ...) in image-buffer pixels to 0..1 in the preview view.
+     * The affine `[a, b, c, d, e, f]` mapping buffer pixels to 0..1 in the preview view:
+     * `x' = a*x + b*y + c`, `y' = d*x + e*y + f`.
      *
-     * With a laid-out [PreviewView] that has a stream, the mapping is exact:
-     * `buffer -> sensor` (inverse of the analysis frame's `sensorToBufferTransformMatrix`), then
-     * `sensor -> view` ([PreviewView.getSensorToViewTransform], which includes the display
-     * rotation and the FILL_CENTER scale and crop), divided by the view size. Points the crop cut
-     * off land outside 0..1 and are not clamped.
-     *
-     * Without such a view, the fallback is the upright analysis image itself: rotated by
-     * `rotationDegrees` and divided by its size, as if the preview showed all of it.
+     * With a laid-out [PreviewView] that has a stream, it is exact: `buffer -> sensor` (inverse of
+     * the frame's `sensorToBufferTransformMatrix`), then `sensor -> view`
+     * ([PreviewView.getSensorToViewTransform], which includes the display rotation and the
+     * FILL_CENTER scale and crop), divided by the view size. Points the crop cut off land outside
+     * 0..1. Without such a view it is the upright image: rotated clockwise by `rotationDegrees`
+     * and divided by its size.
      */
-    private fun mapAnchors(raw: FloatArray, g: FrameGeometry?): List<Double> {
-        if (g == null || raw.isEmpty()) return ArrayList()
+    private fun toPreview(g: FrameGeometry): FloatArray {
         val view = previews.current
         if (view != null && view.width > 0 && view.height > 0) {
-            val bufferToView = bufferToView(view, g)
-            if (bufferToView != null) {
-                val pts = raw.copyOf()
-                bufferToView.mapPoints(pts)
-                val w = view.width.toFloat()
-                val h = view.height.toFloat()
-                return List(pts.size) { i -> (pts[i] / (if (i % 2 == 0) w else h)).toDouble() }
+            val m = bufferToView(view, g)
+            if (m != null) {
+                m.postScale(1f / view.width, 1f / view.height)
+                val v = FloatArray(9)
+                m.getValues(v)
+                return floatArrayOf(
+                    v[Matrix.MSCALE_X], v[Matrix.MSKEW_X], v[Matrix.MTRANS_X],
+                    v[Matrix.MSKEW_Y], v[Matrix.MSCALE_Y], v[Matrix.MTRANS_Y],
+                )
             }
         }
-        return uprightFallback(raw, g)
+        return uprightAffine(g)
     }
 
     private fun bufferToView(view: PreviewView, g: FrameGeometry): Matrix? {
@@ -543,43 +483,26 @@ internal class ScannerSession(
         }
     }
 
-    private fun uprightFallback(raw: FloatArray, g: FrameGeometry): List<Double> {
-        val w = g.width.toFloat()
-        val h = g.height.toFloat()
-        val out = ArrayList<Double>(raw.size)
-        var i = 0
-        while (i + 1 < raw.size) {
-            val x = raw[i] / w // 0..1 across the unrotated image
-            val y = raw[i + 1] / h
-            // Rotating the image clockwise by r degrees (what ImageInfo.rotationDegrees means).
-            val (rx, ry) = when (((g.rotationDegrees % 360) + 360) % 360) {
-                90 -> (1f - y) to x
-                180 -> (1f - x) to (1f - y)
-                270 -> y to (1f - x)
-                else -> x to y
-            }
-            out.add(rx.toDouble())
-            out.add(ry.toDouble())
-            i += 2
+    /** Buffer pixels to the upright image, 0..1; the image rotated clockwise by `rotationDegrees`. */
+    private fun uprightAffine(g: FrameGeometry): FloatArray {
+        val sx = 1f / g.width // x / width: 0..1 across the unrotated image
+        val sy = 1f / g.height
+        return when (((g.rotationDegrees % 360) + 360) % 360) {
+            90 -> floatArrayOf(0f, -sy, 1f, sx, 0f, 0f) // (1 - y, x)
+            180 -> floatArrayOf(-sx, 0f, 1f, 0f, -sy, 1f) // (1 - x, 1 - y)
+            270 -> floatArrayOf(0f, sy, 0f, -sx, 0f, 1f) // (y, 1 - x)
+            else -> floatArrayOf(sx, 0f, 0f, 0f, sy, 0f)
         }
-        return out
     }
 
     // endregion
 
     private companion object {
         const val TAG = "ParticleCode"
-        const val REFOCUS_INTERVAL_MS = 2_000L
+        // Native no longer knows whether a code is locked, so refocus on a fixed, relaxed period
+        // (longer than AUTO_CANCEL_SECONDS: continuous AF runs in between).
+        const val REFOCUS_INTERVAL_MS = 4_000L
         const val AUTO_CANCEL_SECONDS = 3L
-
-        fun hintCode(hint: Hint): Int = when (hint) {
-            Hint.None -> 0
-            Hint.PointAtCode -> 1
-            Hint.MoveBack -> 2
-            Hint.HoldSteady -> 3
-            Hint.Lighting -> 4
-            Hint.UpdateApp -> 5
-            Hint.Other -> 6
-        }
+        val TARGET_SIZE = Size(1920, 1080)
     }
 }
