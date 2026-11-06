@@ -1861,8 +1861,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   FrameResultDto dco_decode_frame_result_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 9)
-      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
+    if (arr.length != 10)
+      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
     return FrameResultDto(
       locked: dco_decode_bool(arr[0]),
       profile: dco_decode_opt_box_autoadd_profile_dto(arr[1]),
@@ -1873,7 +1873,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       progress: dco_decode_progress_dto(arr[6]),
       rejectReason: dco_decode_opt_String(arr[7]),
       hint: dco_decode_opt_String(arr[8]),
+      hintCode: dco_decode_hint_dto(arr[9]),
     );
+  }
+
+  @protected
+  HintDto dco_decode_hint_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return HintDto.values[raw as int];
   }
 
   @protected
@@ -2622,6 +2629,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     final var_progress = sse_decode_progress_dto(deserializer);
     final var_rejectReason = sse_decode_opt_String(deserializer);
     final var_hint = sse_decode_opt_String(deserializer);
+    final var_hintCode = sse_decode_hint_dto(deserializer);
     return FrameResultDto(
       locked: var_locked,
       profile: var_profile,
@@ -2632,7 +2640,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       progress: var_progress,
       rejectReason: var_rejectReason,
       hint: var_hint,
+      hintCode: var_hintCode,
     );
+  }
+
+  @protected
+  HintDto sse_decode_hint_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    final inner = sse_decode_i_32(deserializer);
+    return HintDto.values[inner];
   }
 
   @protected
@@ -3392,6 +3408,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_progress_dto(self.progress, serializer);
     sse_encode_opt_String(self.rejectReason, serializer);
     sse_encode_opt_String(self.hint, serializer);
+    sse_encode_hint_dto(self.hintCode, serializer);
+  }
+
+  @protected
+  void sse_encode_hint_dto(HintDto self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected

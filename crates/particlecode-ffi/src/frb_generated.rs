@@ -1962,6 +1962,7 @@ impl SseDecode for crate::api::dto::FrameResultDto {
         let mut var_progress = <crate::api::dto::ProgressDto>::sse_decode(deserializer);
         let mut var_rejectReason = <Option<String>>::sse_decode(deserializer);
         let mut var_hint = <Option<String>>::sse_decode(deserializer);
+        let mut var_hintCode = <crate::api::dto::HintDto>::sse_decode(deserializer);
         return crate::api::dto::FrameResultDto {
             locked: var_locked,
             profile: var_profile,
@@ -1972,6 +1973,23 @@ impl SseDecode for crate::api::dto::FrameResultDto {
             progress: var_progress,
             reject_reason: var_rejectReason,
             hint: var_hint,
+            hint_code: var_hintCode,
+        };
+    }
+}
+
+impl SseDecode for crate::api::dto::HintDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::dto::HintDto::None,
+            1 => crate::api::dto::HintDto::PointAtCode,
+            2 => crate::api::dto::HintDto::MoveBack,
+            3 => crate::api::dto::HintDto::HoldSteady,
+            4 => crate::api::dto::HintDto::Lighting,
+            5 => crate::api::dto::HintDto::UpdateApp,
+            _ => unreachable!("Invalid variant for HintDto: {}", inner),
         };
     }
 }
@@ -2830,6 +2848,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::dto::FrameResultDto {
             self.progress.into_into_dart().into_dart(),
             self.reject_reason.into_into_dart().into_dart(),
             self.hint.into_into_dart().into_dart(),
+            self.hint_code.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -2842,6 +2861,26 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::FrameResultDto>
     for crate::api::dto::FrameResultDto
 {
     fn into_into_dart(self) -> crate::api::dto::FrameResultDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::dto::HintDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::None => 0.into_dart(),
+            Self::PointAtCode => 1.into_dart(),
+            Self::MoveBack => 2.into_dart(),
+            Self::HoldSteady => 3.into_dart(),
+            Self::Lighting => 4.into_dart(),
+            Self::UpdateApp => 5.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::dto::HintDto {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::HintDto> for crate::api::dto::HintDto {
+    fn into_into_dart(self) -> crate::api::dto::HintDto {
         self
     }
 }
@@ -3411,6 +3450,27 @@ impl SseEncode for crate::api::dto::FrameResultDto {
         <crate::api::dto::ProgressDto>::sse_encode(self.progress, serializer);
         <Option<String>>::sse_encode(self.reject_reason, serializer);
         <Option<String>>::sse_encode(self.hint, serializer);
+        <crate::api::dto::HintDto>::sse_encode(self.hint_code, serializer);
+    }
+}
+
+impl SseEncode for crate::api::dto::HintDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::dto::HintDto::None => 0,
+                crate::api::dto::HintDto::PointAtCode => 1,
+                crate::api::dto::HintDto::MoveBack => 2,
+                crate::api::dto::HintDto::HoldSteady => 3,
+                crate::api::dto::HintDto::Lighting => 4,
+                crate::api::dto::HintDto::UpdateApp => 5,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 

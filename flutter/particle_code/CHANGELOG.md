@@ -22,8 +22,8 @@
   over by address (`particle_code/camera_frames`, `releaseFrame`); `ParticleScanner` feeds
   them to the Rust decoder through flutter_rust_bridge (planes read in place, no copy),
   releases each frame, and builds `ScanFrame` / `ScanSegment` / `ScanDone` / `ScanError`
-  itself (anchors mapped through the frame's `toPreview`, hint code derived from the
-  decoder's advice text). The `ScanEvent` types, hint codes, `ParticleScannerPreview` and
+  itself (anchors mapped through the frame's `toPreview`, hint code from the
+  decoder's `FrameResultDto.hintCode`). The `ScanEvent` types, hint codes, `ParticleScannerPreview` and
   the progress ring are unchanged.
 * **Breaking:** `ParticleScanner.start` needs `await ParticleCode.init()` and throws a
   `StateError` otherwise. `ParticleScanner.eventsChannel` is now `framesChannel`

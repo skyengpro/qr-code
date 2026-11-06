@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `bad_buffers`, `chroma`, `feed_yuv_slices`, `process`, `rejected`, `try_feed_rgba`, `try_feed_yuv`, `view`, `vision_hint`
+// These functions are ignored because they are not marked as `pub`: `bad_buffers`, `chroma`, `feed_yuv_slices`, `process`, `rejected`, `try_feed_rgba`, `try_feed_yuv`, `view`, `vision_hint`, `with_hint`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `YuvPlanes`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `fmt`
 

@@ -233,29 +233,13 @@ void main() {
       expect(mapToPreview(960, 0, m).dy, greaterThan(1));
     });
 
-    test('hint texts of the decoder map to codes', () {
-      expect(hintCodeFor(null), ScanHint.none);
-      expect(hintCodeFor(''), ScanHint.none);
-      expect(hintCodeFor('Point the camera at the code'), ScanHint.pointAtCode);
-      expect(
-        hintCodeFor('Move back: the whole code must be in view'),
-        ScanHint.moveBack,
-      );
-      expect(
-        hintCodeFor('Hold the phone steady, facing the code'),
-        ScanHint.holdSteady,
-      );
-      expect(
-        hintCodeFor(
-          'Too dark or too much glare: change the angle or the light',
-        ),
-        ScanHint.lighting,
-      );
-      expect(
-        hintCodeFor('This code needs a newer version of the app'),
-        ScanHint.updateApp,
-      );
-      expect(hintCodeFor('something else'), ScanHint.other);
+    test('decoder hint codes map to scan hints', () {
+      expect(scanHintFor(HintDto.none), ScanHint.none);
+      expect(scanHintFor(HintDto.pointAtCode), ScanHint.pointAtCode);
+      expect(scanHintFor(HintDto.moveBack), ScanHint.moveBack);
+      expect(scanHintFor(HintDto.holdSteady), ScanHint.holdSteady);
+      expect(scanHintFor(HintDto.lighting), ScanHint.lighting);
+      expect(scanHintFor(HintDto.updateApp), ScanHint.updateApp);
     });
   });
 
@@ -397,7 +381,13 @@ void main() {
     test(
       'a rejected frame is a ScanFrame with its hint, then released',
       () async {
-        rig.next(_rejected('no lock', hint: 'Point the camera at the code'));
+        rig.next(
+          _rejected(
+            'no lock',
+            hint: 'Point the camera at the code',
+            hintCode: HintDto.pointAtCode,
+          ),
+        );
         rig.frame(7);
         await pumpEventQueue();
         final f = got.single as ScanFrame;
@@ -992,6 +982,7 @@ FrameResultDto _result({
   List<ImagePointDto> anchors = const [],
   required ProgressDto progress,
   String? hint,
+  HintDto hintCode = HintDto.none,
 }) => FrameResultDto(
   locked: locked,
   profile: locked ? ProfileDto.m : null,
@@ -1003,9 +994,14 @@ FrameResultDto _result({
       : const LivenessDto.unknown(),
   progress: progress,
   hint: hint,
+  hintCode: hintCode,
 );
 
-FrameResultDto _rejected(String reason, {String? hint}) => FrameResultDto(
+FrameResultDto _rejected(
+  String reason, {
+  String? hint,
+  HintDto hintCode = HintDto.none,
+}) => FrameResultDto(
   locked: false,
   anchors: const [],
   sharpness: 0,
@@ -1013,6 +1009,7 @@ FrameResultDto _rejected(String reason, {String? hint}) => FrameResultDto(
   progress: ProgressDto.rejected(reason: reason),
   rejectReason: reason,
   hint: hint,
+  hintCode: hintCode,
 );
 
 /// A scripted decoder: results come from a queue, `gate` holds a decode open.

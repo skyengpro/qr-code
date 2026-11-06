@@ -5,7 +5,9 @@ use flutter_rust_bridge::frb;
 use particlecode_core::{DecodeError, Progress, Receiver, Sym3};
 use particlecode_vision::{PlaneRef, VisionError, YuvFrame, YuvRef, locate, read, sharpness};
 
-use super::dto::{CameraFrameDto, FrameResultDto, ImagePointDto, LivenessDto, ProgressDto};
+use super::dto::{
+    CameraFrameDto, FrameResultDto, HintDto, ImagePointDto, LivenessDto, ProgressDto,
+};
 
 /// A decoder session. Opaque to the host language; feed it frames until
 /// [`ProgressDto::Done`], or until the UI gives up and drops it.
@@ -233,8 +235,7 @@ impl ParticleDecoder {
                         reason: e.to_string(),
                     },
                     reject_reason: Some(e.to_string()),
-                    hint: Some(vision_hint(&e).into()),
-                    ..locked
+                    ..locked.with_hint(vision_hint(&e))
                 };
             }
         };
@@ -242,13 +243,16 @@ impl ParticleDecoder {
         let (reject_reason, hint) = match &progress {
             Progress::Rejected(e) => (
                 Some(e.to_string()),
-                matches!(
+                if matches!(
                     e,
                     DecodeError::ShapeTableMismatch(_) | DecodeError::UnknownShape(_)
-                )
-                .then(|| UPDATE_HINT.to_owned()),
+                ) {
+                    HintDto::UpdateApp
+                } else {
+                    HintDto::None
+                },
             ),
-            _ => (None, None),
+            _ => (None, HintDto::None),
         };
         FrameResultDto {
             profile: Some(header.profile.into()),
@@ -256,8 +260,7 @@ impl ParticleDecoder {
             liveness: liveness.into(),
             progress: progress.into(),
             reject_reason,
-            hint,
-            ..locked
+            ..locked.with_hint(hint)
         }
     }
 
@@ -276,18 +279,16 @@ impl ParticleDecoder {
     }
 }
 
-const UPDATE_HINT: &str = "This code needs a newer version of the app";
-
 /// User-facing advice for a vision failure.
-fn vision_hint(e: &VisionError) -> &'static str {
+fn vision_hint(e: &VisionError) -> HintDto {
     match e {
-        VisionError::NoLock => "Point the camera at the code",
-        VisionError::Truncated => "Move back: the whole code must be in view",
+        VisionError::NoLock => HintDto::PointAtCode,
+        VisionError::Truncated => HintDto::MoveBack,
         VisionError::Residual | VisionError::ProfileMismatch | VisionError::Header(_) => {
-            "Hold the phone steady, facing the code"
+            HintDto::HoldSteady
         }
-        VisionError::Lighting => "Too dark or too much glare: change the angle or the light",
-        VisionError::UnknownShape(_) => UPDATE_HINT,
+        VisionError::Lighting => HintDto::Lighting,
+        VisionError::UnknownShape(_) => HintDto::UpdateApp,
     }
 }
 
@@ -315,7 +316,18 @@ impl FrameResultDto {
                 reason: reason.clone(),
             },
             reject_reason: Some(reason),
-            hint: Some(vision_hint(&e).into()),
+            hint: None,
+            hint_code: HintDto::None,
+        }
+        .with_hint(vision_hint(&e))
+    }
+
+    /// Sets `hint` and `hint_code` together.
+    fn with_hint(self, code: HintDto) -> FrameResultDto {
+        FrameResultDto {
+            hint: code.text().map(str::to_owned),
+            hint_code: code,
+            ..self
         }
     }
 }

@@ -8,8 +8,8 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'dto.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `from_dots`, `rejected_because`, `rejected`, `session_config`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
+// These functions are ignored because they are not marked as `pub`: `from_dots`, `rejected_because`, `rejected`, `session_config`, `text`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 
 /// The palette every painter must draw with.
 PaletteDto palette() => RustLib.instance.api.crateApiDtoPalette();
@@ -616,6 +616,9 @@ class FrameResultDto {
   /// Short user-facing advice ("too dark or glare", "move back"), else `None`.
   final String? hint;
 
+  /// `hint` as a code, for localized UI text. `None` exactly when `hint` is `None`.
+  final HintDto hintCode;
+
   const FrameResultDto({
     required this.locked,
     this.profile,
@@ -626,6 +629,7 @@ class FrameResultDto {
     required this.progress,
     this.rejectReason,
     this.hint,
+    required this.hintCode,
   });
 
   @override
@@ -638,7 +642,8 @@ class FrameResultDto {
       liveness.hashCode ^
       progress.hashCode ^
       rejectReason.hashCode ^
-      hint.hashCode;
+      hint.hashCode ^
+      hintCode.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -653,7 +658,30 @@ class FrameResultDto {
           liveness == other.liveness &&
           progress == other.progress &&
           rejectReason == other.rejectReason &&
-          hint == other.hint;
+          hint == other.hint &&
+          hintCode == other.hintCode;
+}
+
+/// What the person holding the phone should do; the code behind
+/// [`FrameResultDto::hint`].
+enum HintDto {
+  /// No advice.
+  none,
+
+  /// Nothing found: aim at the code.
+  pointAtCode,
+
+  /// Part of the code is outside the frame.
+  moveBack,
+
+  /// Blur, tilt or a misread header: hold still, face the code.
+  holdSteady,
+
+  /// Too dark or glare.
+  lighting,
+
+  /// The code uses a shape or format this version does not know.
+  updateApp,
 }
 
 /// A point in camera-image pixels (origin top-left, `y` down).

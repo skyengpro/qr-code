@@ -658,6 +658,40 @@ pub struct FrameResultDto {
     pub reject_reason: Option<String>,
     /// Short user-facing advice ("too dark or glare", "move back"), else `None`.
     pub hint: Option<String>,
+    /// `hint` as a code, for localized UI text. `None` exactly when `hint` is `None`.
+    pub hint_code: HintDto,
+}
+
+/// What the person holding the phone should do; the code behind
+/// [`FrameResultDto::hint`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum HintDto {
+    /// No advice.
+    None,
+    /// Nothing found: aim at the code.
+    PointAtCode,
+    /// Part of the code is outside the frame.
+    MoveBack,
+    /// Blur, tilt or a misread header: hold still, face the code.
+    HoldSteady,
+    /// Too dark or glare.
+    Lighting,
+    /// The code uses a shape or format this version does not know.
+    UpdateApp,
+}
+
+impl HintDto {
+    /// The English advice text of `FrameResultDto::hint`.
+    pub(crate) fn text(self) -> Option<&'static str> {
+        match self {
+            HintDto::None => None,
+            HintDto::PointAtCode => Some("Point the camera at the code"),
+            HintDto::MoveBack => Some("Move back: the whole code must be in view"),
+            HintDto::HoldSteady => Some("Hold the phone steady, facing the code"),
+            HintDto::Lighting => Some("Too dark or too much glare: change the angle or the light"),
+            HintDto::UpdateApp => Some("This code needs a newer version of the app"),
+        }
+    }
 }
 
 #[cfg(test)]

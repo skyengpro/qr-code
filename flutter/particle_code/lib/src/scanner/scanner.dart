@@ -424,7 +424,7 @@ class ParticleScanner {
       anchors: mapAnchorsToPreview(r.anchors, toPreview),
       sharpness: r.sharpness,
       hint: r.hint,
-      hintCode: hintCodeFor(r.hint),
+      hintCode: scanHintFor(r.hintCode),
       rejectReason: switch (r.progress) {
         ProgressDto_Rejected(:final reason) => r.rejectReason ?? reason,
         _ => r.rejectReason,

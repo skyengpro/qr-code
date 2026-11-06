@@ -140,6 +140,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   FrameResultDto dco_decode_frame_result_dto(dynamic raw);
 
   @protected
+  HintDto dco_decode_hint_dto(dynamic raw);
+
+  @protected
   int dco_decode_i_32(dynamic raw);
 
   @protected
@@ -366,6 +369,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   FrameResultDto sse_decode_frame_result_dto(SseDeserializer deserializer);
+
+  @protected
+  HintDto sse_decode_hint_dto(SseDeserializer deserializer);
 
   @protected
   int sse_decode_i_32(SseDeserializer deserializer);
@@ -623,6 +629,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     FrameResultDto self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_hint_dto(HintDto self, SseSerializer serializer);
 
   @protected
   void sse_encode_i_32(int self, SseSerializer serializer);

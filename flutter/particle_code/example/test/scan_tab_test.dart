@@ -37,6 +37,7 @@ FrameResultDto _frame({
     segmentsTotal: 3,
   ),
   hint: hint,
+  hintCode: hint == null ? HintDto.none : HintDto.holdSteady,
 );
 
 FrameResultDto _done(Uint8List payload, {bool consistent = true}) =>
@@ -52,6 +53,7 @@ FrameResultDto _done(Uint8List payload, {bool consistent = true}) =>
         consistent: consistent,
       ),
       progress: ProgressDto.done(payload: payload),
+      hintCode: HintDto.none,
     );
 
 /// A decoder that returns what the test queued.

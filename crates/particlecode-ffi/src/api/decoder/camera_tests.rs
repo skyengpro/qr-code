@@ -39,7 +39,10 @@ fn run(data: &[u8], mut feed: impl FnMut(&mut ParticleDecoder, u32) -> FrameResu
                 assert_eq!(dec.session_id(), Some(0xC0DE));
                 return;
             }
-            ProgressDto::Accepted { .. } => assert!(r.reject_reason.is_none()),
+            ProgressDto::Accepted { .. } => {
+                assert!(r.reject_reason.is_none());
+                assert_eq!((r.hint, r.hint_code), (None, HintDto::None));
+            }
             ProgressDto::Rejected { reason } => panic!("frame {i} rejected: {reason}"),
         }
     }
@@ -164,6 +167,7 @@ fn unusable_frames_are_rejections_with_hints() {
         assert!(matches!(r.progress, ProgressDto::Rejected { .. }));
         assert!(r.reject_reason.is_some());
         assert!(r.hint.is_some());
+        assert_ne!(r.hint_code, HintDto::None);
     }
     assert_eq!(dec.session_id(), None);
 }
@@ -171,9 +175,20 @@ fn unusable_frames_are_rejections_with_hints() {
 #[test]
 fn lighting_failures_map_to_a_user_hint() {
     let hint = vision_hint(&VisionError::Lighting);
-    assert!(hint.contains("dark") && hint.contains("glare"));
-    assert!(vision_hint(&VisionError::Truncated).contains("back"));
-    assert_eq!(vision_hint(&VisionError::UnknownShape(9)), UPDATE_HINT);
+    assert_eq!(hint, HintDto::Lighting);
+    let text = hint.text().unwrap();
+    assert!(text.contains("dark") && text.contains("glare"));
+    assert!(
+        vision_hint(&VisionError::Truncated)
+            .text()
+            .unwrap()
+            .contains("back")
+    );
+    assert_eq!(
+        vision_hint(&VisionError::UnknownShape(9)),
+        HintDto::UpdateApp
+    );
+    assert_eq!(HintDto::None.text(), None);
 }
 
 /// The pointer-handoff entry point: planes passed by address, `U` and `V` aliasing one
