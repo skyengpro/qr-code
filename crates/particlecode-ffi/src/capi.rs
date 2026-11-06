@@ -268,6 +268,9 @@ impl PcDecoder {
 /// `PC_ABI_VERSION` at load time.
 #[unsafe(no_mangle)]
 pub extern "C" fn pc_abi_version() -> u32 {
+    // Reading the flutter_rust_bridge keeper pulls it (and every symbol it names) into an
+    // iOS static link: the Swift SymbolKeeper calls this function. See `frb_keep`.
+    std::hint::black_box(&crate::frb_keep::FRB_SYMBOLS);
     PC_ABI_VERSION
 }
 

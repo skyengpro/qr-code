@@ -7,20 +7,20 @@ This is the contract between the Dart side (`lib/`), the Android side (`android/
 
 | Role | Where it runs | How it reaches Rust |
 | --- | --- | --- |
-| **Sender**: encode a payload, paint animated frames | Dart (`CustomPainter`) | `dart:ffi` → C ABI `pc_encoder_*` (`crates/particlecode-ffi/include/particlecode.h`) |
+| **Sender**: encode a payload, paint animated frames | Dart (`CustomPainter`) | flutter_rust_bridge → `crates/particlecode-ffi/src/api` (generated Dart in `lib/src/rust/`; `ParticleCode.init()` loads the library) |
 | **Scanner**: camera → decoder → progress | Native (CameraX / AVFoundation) | Android: `particlecode-jni` (`android/particlecode`), iOS: `ParticleCodeKit` (`apple/`) |
 
 Camera frames never cross into Dart. Only small progress events cross, plus the payload at the end.
 
 ### Native libraries
 * **Android:** a single `libparticlecode_jni.so` per ABI, built by `scripts/build-android.sh` into
-  `android/particlecode/src/main/jniLibs`. It exports the JNI functions (scanner) **and** all
-  `pc_*` C functions (sender), so Dart opens it with `DynamicLibrary.open('libparticlecode_jni.so')`.
+  `android/particlecode/src/main/jniLibs`. It exports the JNI functions (scanner) **and** the
+  flutter_rust_bridge functions (sender), so Dart opens it with `ExternalLibrary.open('libparticlecode_jni.so')`.
 * **iOS:** `ParticleCodeFFI.xcframework` (static, `scripts/build-xcframework.sh`) linked into the
-  app. Dart uses `DynamicLibrary.process()`. The plugin must keep every `pc_*` symbol (its Swift
-  `SymbolKeeper` references them all, and the podspec sets Strip Style to non-global), because
-  the encoder functions are only referenced from Dart and the linker would drop them.
-* **Host (tests, desktop):** `DynamicLibrary.open` of `$PARTICLECODE_LIB` if set, else the
+  app. Dart uses `ExternalLibrary.process`. The bridge symbols are only referenced from Dart, so the
+  Rust side keeps them alive (`crates/particlecode-ffi/src/frb_keep.rs`), and the podspec sets
+  Strip Style to non-global.
+* **Host (tests, desktop):** `ExternalLibrary.open` of `$PARTICLECODE_LIB` if set, else the
   workspace `target/{debug,release}/libparticlecode_ffi.{so,dylib}`.
 
 ## Method channel `particle_code/scanner`
@@ -79,7 +79,8 @@ Overlay anchor coordinates are normalized to this view's displayed content.
 ## Sender painter contract
 
 The painter follows `crates/particlecode-ffi/README.md` ("Painter contract"):
-* Frame JSON is the serde `FrameSpec` from `pc_encoder_frame_json`, in pitch units with y down.
+* Frames are the typed `FrameDto` of the bridge (`FrameSpec.fromDto`; the JSON form is the same
+  data), in pitch units with y down.
 * Use the exact sRGB palette (`profile::colors`).
 * The data frame changes every 1000/fps ms on a timer, independent of paint.
 * 40 ms cross-fade between data frames.

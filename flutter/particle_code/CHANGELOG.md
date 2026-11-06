@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+* The sender now uses flutter_rust_bridge 2.13 (generated bindings in `lib/src/rust/`)
+  instead of hand-written `dart:ffi`, JSON and a worker isolate.
+* **Breaking:** call `await ParticleCode.init()` once (for example in `main()`) before
+  creating a `ParticleEncoder`, calling `livenessVerify` or showing a `ParticleCodeView`;
+  otherwise they throw a `StateError`. `init` is idempotent.
+* **Breaking:** removed `ParticleEncoder.createWith`, `ParticleEncoder.fromWorkerSpec`,
+  `ParticleEncoder.workerSpec`, `EncoderWorkerSpec` and `debugFrameCalls`; removed
+  `FrameSpec.toMessage` / `fromMessage` and `FrameDots.toMessage` / `fromMessage`.
+* Added `ParticleEncoder.frameAsync`, `FrameSpec.fromDto` and `ParticleCode.init`.
+  `ParticleCodeView` prefetches with `frameAsync`; `useBackgroundIsolate` is deprecated and
+  has no effect.
+* Frames are built from typed arrays directly: no JSON parsing for painting. Profile M/L
+  `frame()` costs about 0.3 / 0.4 ms instead of 3.3 / 5.3 ms. The streaming JSON parser is
+  gone; `frameJson` and `FrameSpec.fromJson` remain.
+* The `pc_abi_version` check is replaced by the bridge's content hash, verified by `init`.
+* Dropped the `ffi` package dependency.
+
 ## 0.2.0
 
 * Swift Package Manager support on iOS, beside CocoaPods: the plugin builds through

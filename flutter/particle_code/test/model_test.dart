@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:particle_code/particle_code.dart';
-import 'package:particle_code/src/ffi/library_loader.dart';
+import 'package:particle_code/src/native_library.dart';
 import 'package:particle_code/src/palette.dart';
 
 void main() {

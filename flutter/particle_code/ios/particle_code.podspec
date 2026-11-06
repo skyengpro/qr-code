@@ -17,7 +17,7 @@ Pod::Spec.new do |s|
     Native iOS side of the particle_code plugin: an AVFoundation scanner that feeds camera
     frames to the Rust decoder in place (ParticleCodeKit), a camera preview platform view and
     the brightness/idle-timer control for showing a code. The sender (encoder) is reached from
-    Dart through dart:ffi.
+    Dart through flutter_rust_bridge.
   DESC
   s.homepage         = 'https://github.com/vaam-apps/qr-code'
   s.license          = { :type => 'MIT' }
@@ -29,7 +29,7 @@ Pod::Spec.new do |s|
   s.dependency 'Flutter'
 
   # Everything ends up in the Runner executable, even when the app uses `use_frameworks!`.
-  # dart:ffi looks the encoder functions up with DynamicLibrary.process(), so they must be
+  # Dart looks the bridge's functions up with DynamicLibrary.process(), so they must be
   # linked into the executable itself, next to the Swift code that keeps them.
   s.static_framework = true
 
@@ -59,15 +59,15 @@ Pod::Spec.new do |s|
     'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386',
   }
 
-  # Keep the pc_* C functions that only Dart calls. CocoaPods links the vendored static
+  # Keep the C functions that only Dart calls. CocoaPods links the vendored static
   # xcframework lazily (only archive members something references are loaded), and release
-  # builds dead-strip. Sources/particle_code/SymbolKeeper.swift references every pc_* function from live
-  # code, which keeps them through both; tool/check-symbols.sh keeps it in step with the
-  # header, and CI checks the built app's symbol table. (A -force_load of the archive is not
+  # builds dead-strip. Sources/particle_code/SymbolKeeper.swift calls pc_abi_version(), which
+  # holds every flutter_rust_bridge symbol (particlecode-ffi's frb_keep.rs), and references
+  # every pc_* function from live code; CI checks the built app's symbol table. (A -force_load of the archive is not
   # used: CocoaPods does not expose the copied slice as a declared build input, so Xcode
   # rejects the path, and the keeper makes it unnecessary.)
   s.user_target_xcconfig = {
-    # dart:ffi finds the pc_* functions with dlsym (DynamicLibrary.process()), so release
+    # Dart finds the bridge functions with dlsym (DynamicLibrary.process()), so release
     # builds must keep global symbols: strip only local ones.
     'STRIP_STYLE' => 'non-global',
   }

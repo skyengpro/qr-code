@@ -149,8 +149,17 @@ The spec's pipeline, with these refinements (details in `particlecode-vision`'s 
 
 ## Native bindings
 
-* `particlecode-ffi` is the one binary surface: flutter_rust_bridge-style `api`, the C ABI
+* `particlecode-ffi` is the one binary surface: the `flutter_rust_bridge` `api`, the C ABI
   (`include/particlecode.h`), and `native` (borrowed-buffer entry points for Rust hosts).
+* Flutter sender: `flutter_rust_bridge` 2.13 generates `src/frb_generated.rs` and the Dart
+  bindings (`flutter/particle_code/lib/src/rust`) from `api`
+  (`flutter/particle_code/flutter_rust_bridge.yaml`); both are committed, and CI regenerates
+  and fails on a diff. Frames for the view come from `ParticleEncoder::frame_async`, which the
+  bridge runs on its Rust thread pool, as typed arrays (no JSON). frb's cargokit build
+  integration is not used: the same prebuilt libraries as before carry the bridge (Android's
+  `libparticlecode_jni.so` exports its symbols; on iOS `frb_keep.rs` holds the 19 symbols Dart
+  looks up in the static link, read by `pc_abi_version`, which the Swift `SymbolKeeper`
+  calls). The generator, the Dart package and the crate are pinned to the same version.
 * iOS/macOS: `scripts/build-xcframework.sh` packages the C ABI as
   `ParticleCodeFFI.xcframework`; `apple/ParticleCodeKit` wraps it in Swift (NV12
   `CVPixelBuffer`s read in place, an `AVCaptureVideoDataOutput` delegate).

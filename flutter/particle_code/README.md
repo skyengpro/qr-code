@@ -3,7 +3,8 @@
 Particle Code for Flutter. A phone screen shows an animated circular field of colored
 dots that carries a COSE/CBOR payload; another phone's camera scans it.
 
-* **Sender**: encode a payload with the Rust library (`dart:ffi`) and paint the animated
+* **Sender**: encode a payload with the Rust library (through
+  [flutter_rust_bridge](https://cjycode.com/flutter_rust_bridge/)) and paint the animated
   code in pure Dart (`ParticleCodeView`).
 * **Scanner**: a native camera pipeline (CameraX on Android, AVFoundation on iOS) decodes
   with the same Rust library. Camera frames never reach Dart; only small progress events
@@ -13,9 +14,24 @@ The wire contract between the Dart and native sides is in [`PROTOCOL.md`](PROTOC
 
 ## Show a code
 
+Initialize the library once, before anything else of the sender, usually in `main()`:
+
 ```dart
+import 'package:flutter/widgets.dart';
 import 'package:particle_code/particle_code.dart';
 
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await ParticleCode.init();   // required; idempotent
+  runApp(const MyApp());
+}
+```
+
+`ParticleEncoder.create` (and `livenessVerify`) throw a `StateError` that says so if `init`
+has not completed. Pass `ParticleCode.init(library: ...)` an `ExternalLibrary` to load the
+native library yourself.
+
+```dart
 final encoder = ParticleEncoder.create(
   cborBytes, // Uint8List, typically a COSE_Sign1 / CBOR payload
   options: const EncoderOptions(
@@ -60,34 +76,29 @@ Painting is `ParticleCodePainter`, a plain `CustomPainter` you can use yourself 
 example to render into an image). Colors come from `ParticleCodePalette` and must not be
 altered or color-managed: the receiver's classifier depends on them.
 
-### Frame generation runs off the UI isolate
+### Frame generation stays off the UI isolate
 
-Building a frame is Reed-Solomon coding in Rust plus JSON that has to be read in Dart: with
-the release native library about 7 ms (profile M) and 15 ms (L) when parsed with
-`jsonDecode`, and 3.3 ms / 5.3 ms with the package's streaming dot parser, on a desktop
-core; a mid-range phone is two to three times slower. Doing that on the UI isolate every
-100 ms would drop a 60 fps frame at every data frame, so `ParticleCodeView` (default
-`useBackgroundIsolate: true`) works like this:
+`encoder.frame(i)` builds a frame synchronously. With the release native library that is
+roughly 0.3 ms (profile M) and 0.4 ms (L) on a desktop core: Reed-Solomon coding in Rust
+and a copy of six typed arrays into Dart (positions, lattice cells, hues and sizes), with no
+JSON and no per-dot objects. A mid-range phone is two to three times slower.
+`encoder.frameAsync(i)` does the Rust part on flutter_rust_bridge's thread pool and
+completes a `Future`, so the UI isolate only pays for the call and the conversion
+(about 0.1 ms per frame on the same machine).
 
-* A long-lived worker isolate builds its own `ParticleEncoder` from the same payload,
-  options and pinned identity (session id, key), so its frames are identical to
-  `encoder.frame(i, unixSeconds: s)`. It stays two data frames ahead of the clock.
-* Frames come back as a few typed arrays (`FrameDots` is structure-of-arrays) and are
-  rebuilt on the UI isolate in tens of microseconds.
-* The liveness second is predicted from the data clock: the second at which the frame will
-  be on screen, not the second at which it was built.
-* The first frames (while the isolate starts) are built synchronously; if the worker cannot
-  start, fails, or is more than about 250 ms late with a frame, the view uses the
-  synchronous path, so it always works. If the worker is only slightly late, the view holds
-  the current frame rather than blocking the UI.
-* The worker is disposed with the view (and while `showing` is `false`).
+`ParticleCodeView` uses `frameAsync`:
 
-Isolates of an app share one heap, and a young-generation collection pauses all of them.
-Allocation-heavy parsing in the worker would therefore still hitch the UI, which is why
-the dots are parsed from the library's UTF-8 buffer straight into typed arrays (no
-per-dot `Map`s) with an exact fast path for numbers; `ParticleEncoder.frame` uses the same
-parser, so the synchronous path is cheaper too. Anything unexpected in the JSON makes it fall
-back to `jsonDecode`.
+* Frames `clockIdx .. clockIdx + 2` are kept in flight. The liveness second is predicted
+  from the data clock: the second at which the frame will be on screen, not the second at
+  which it was requested. Results for a frame that is already past are dropped.
+* The first frame is built synchronously at mount, so there is never an empty first paint.
+* If a frame is late, the view holds the current one (up to about 250 ms, or 3 s / fps),
+  then builds the due frame synchronously. If `frameAsync` fails, it silently uses the
+  synchronous path.
+* Disposing the encoder while calls are in flight is safe: the native object is released
+  when the last call completes.
+
+`ParticleCodeView.useBackgroundIsolate` is deprecated and has no effect.
 
 ## Scan a code
 
@@ -152,27 +163,40 @@ Only the scanner needs the camera permission; showing a code needs none.
 
 ## Native libraries
 
-Nothing is built when you `flutter build`; the Rust libraries are prebuilt from the
-workspace root:
+The sender's Rust API (`crates/particlecode-ffi/src/api`) is bound to Dart with
+flutter_rust_bridge 2.13; the generated Dart is committed in `lib/src/rust/` and must not be
+edited by hand. Regenerate it after changing the Rust API (the generator version must equal
+the `flutter_rust_bridge` package and crate version, see `flutter_rust_bridge.yaml`; CI
+fails on a diff):
+
+```sh
+cd flutter/particle_code
+cargo install flutter_rust_bridge_codegen --version 2.13.0 --locked
+flutter_rust_bridge_codegen generate
+```
+
+The plugin does not use flutter_rust_bridge's cargokit build integration. Nothing is built
+when you `flutter build`; the Rust libraries are prebuilt by our scripts from the workspace
+root:
 
 ```sh
 scripts/build-android.sh          # libparticlecode_jni.so per ABI into android/.../jniLibs
 scripts/build-xcframework.sh --flutter   # ParticleCodeFFI.xcframework into ios/particle_code/Frameworks (needs Xcode)
 ```
 
-* Android: Dart opens `libparticlecode_jni.so`, which exports both the JNI scanner and the
-  `pc_*` encoder C functions.
-* iOS: the xcframework is statically linked and its `pc_*` symbols are kept alive by the
-  plugin's `SymbolKeeper`; Dart uses `DynamicLibrary.process()`. The plugin supports both
-  Swift Package Manager (`ios/particle_code/Package.swift`) and CocoaPods
+* Android: `ParticleCode.init()` opens `libparticlecode_jni.so`, which exports both the JNI
+  scanner and the flutter_rust_bridge symbols.
+* iOS: the xcframework is statically linked and the Rust side keeps the bridge symbols alive;
+  `ParticleCode.init()` uses the process image (`ExternalLibrary.process`). The plugin
+  supports both Swift Package Manager (`ios/particle_code/Package.swift`) and CocoaPods
   (`ios/particle_code.podspec`); with SwiftPM, set the app's Release/Profile
   `STRIP_STYLE = non-global` (see `ios/README.md`).
 * Desktop and tests: `$PARTICLECODE_LIB`, else the newest
   `target/{debug,release}/libparticlecode_ffi.{so,dylib}` found by searching upward from the
   working directory. Run `cargo build -p particlecode-ffi` first.
 
-The package checks `pc_abi_version` against the version it was written for and throws
-`ParticleCodeException` on a mismatch.
+`init` fails with `ParticleCodeException` if the library is missing or was built from a
+different Rust API than the generated Dart (the bridge compares content hashes).
 
 ## Development
 
@@ -183,10 +207,11 @@ flutter analyze
 flutter test
 ```
 
-Tests cover the FFI encoder against the real library, a bit-level parity check of the Dart
+Tests cover the encoder (sync, async, `FrameSpec.fromDto` against the JSON form) against the
+real library, a bit-level parity check of the Dart
 motion port against values computed by `particlecode-core` (fixtures in
 `test/fixtures/`, generator `gen_motion_reference.rs`), pixel-exact painter checks,
 the view's timing and brightness behavior, and the scanner channels with mocks.
 
 The motion port uses 64-bit integer arithmetic and therefore targets the Dart VM
-(Android, iOS, desktop); `dart:ffi` rules out the web anyway.
+(Android, iOS, desktop); the native bridge rules out the web anyway.

@@ -2,12 +2,16 @@
 /// scan them with the camera.
 ///
 /// **Sender.** Create a [ParticleEncoder] from a payload (typically COSE/CBOR) and show it
-/// with a [ParticleCodeView]. The encoder talks to the Rust library over `dart:ffi`;
-/// painting is pure Dart ([ParticleCodePainter]).
+/// with a [ParticleCodeView]. Call `await ParticleCode.init()` once at start-up: the
+/// encoder talks to the Rust library through flutter_rust_bridge; painting is pure Dart
+/// ([ParticleCodePainter]).
 ///
 /// **Scanner.** A [ParticleScanner] controls the native camera pipeline and streams
 /// [ScanEvent]s; [ParticleScannerPreview] shows the camera.
 library;
+
+export 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
+    show ExternalLibrary;
 
 export 'src/display.dart' show ParticleCodeDisplay;
 export 'src/encoder.dart'
@@ -20,6 +24,7 @@ export 'src/encoder.dart'
         ShapeMode,
         livenessVerify;
 export 'src/exception.dart' show ParticleCodeException;
+export 'src/init.dart' show ParticleCode;
 export 'src/frame_spec.dart'
     show
         AnchorSpec,

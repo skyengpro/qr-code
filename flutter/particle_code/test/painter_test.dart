@@ -72,7 +72,8 @@ FrameSpec _frame({CodeProfile profile = CodeProfile.m, int index = 0}) {
   }
 }
 
-void main() {
+Future<void> main() async {
+  await ParticleCode.init();
   final frame = _frame();
 
   group('static frame pixels', () {

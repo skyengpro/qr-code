@@ -1,7 +1,10 @@
-//! The flutter_rust_bridge-style API.
+//! The `flutter_rust_bridge` API.
 //!
-//! Written as plain Rust so `flutter_rust_bridge_codegen generate --rust-input crate::api`
-//! can read it without this crate depending on the bridge:
+//! `flutter_rust_bridge_codegen generate` (configured in
+//! `flutter/particle_code/flutter_rust_bridge.yaml`) reads this module and writes
+//! `src/frb_generated.rs` plus the Dart bindings in `flutter/particle_code/lib/src/rust`.
+//! Functions marked `#[frb(sync)]` are synchronous Dart calls; the rest return a `Future`
+//! and run on the bridge's Rust thread pool. The API is shaped for the bridge:
 //!
 //! * opaque handles with methods: [`encoder::ParticleEncoder`] and
 //!   [`decoder::ParticleDecoder`] (private fields, so the generator treats them as opaque);

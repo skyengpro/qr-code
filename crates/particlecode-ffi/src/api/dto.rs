@@ -4,6 +4,8 @@
 //! it to a Dart class by value. Dot fields are structure-of-arrays ([`DotsDto`]) so Dart
 //! receives a few typed lists instead of thousands of small objects.
 
+use flutter_rust_bridge::frb;
+
 use particlecode_core::FrameSpec;
 use particlecode_core::layout::{SwatchColor, dims};
 use particlecode_core::profile::{Profile, colors};
@@ -257,6 +259,10 @@ pub struct SwatchDto {
     pub y: f64,
     /// Color.
     pub color: SwatchColorDto,
+    /// Which hero anchor's halo it belongs to (`0..3`: top, lower right, lower left).
+    pub anchor: u8,
+    /// Slot on the halo (`0..16`); slot 0 points away from the frame center.
+    pub slot: u8,
 }
 
 /// A particle speck at its rest angle.
@@ -268,10 +274,16 @@ pub struct ParticleDto {
     pub angle: f64,
 }
 
-/// Dots as parallel arrays: dot `i` is at `(xs[i], ys[i])` with hue `colors[i]` (`0..4`)
-/// and size class `sizes[i]` (0 small, 1 large). All four vectors have equal length.
+/// Dots as parallel arrays: dot `i` is at `(xs[i], ys[i])` (lattice cell `(qs[i], rs[i])`)
+/// with hue `colors[i]` (`0..4`) and size class `sizes[i]` (0 small, 1 large). All six
+/// vectors have equal length.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DotsDto {
+    /// Axial lattice column of each dot (0 for header dots). Painters match dots across
+    /// frames by `(q, r)` for the cross-fade.
+    pub qs: Vec<i32>,
+    /// Axial lattice row of each dot (0 for header dots).
+    pub rs: Vec<i32>,
     /// Rest x of each dot, pitch units.
     pub xs: Vec<f64>,
     /// Rest y of each dot, pitch units, down.
@@ -285,6 +297,8 @@ pub struct DotsDto {
 impl DotsDto {
     fn from_dots(dots: &[particlecode_core::frame::Dot]) -> DotsDto {
         DotsDto {
+            qs: dots.iter().map(|d| d.q).collect(),
+            rs: dots.iter().map(|d| d.r).collect(),
             xs: dots.iter().map(|d| d.at.x).collect(),
             ys: dots.iter().map(|d| d.at.y).collect(),
             colors: dots.iter().map(|d| d.color).collect(),
@@ -306,6 +320,14 @@ pub struct FrameDto {
     pub segment_index: u16,
     /// Packet seed (fountain symbol id) of this frame.
     pub packet_seed: u16,
+    /// Payload length in bytes, from the header.
+    pub payload_len: u32,
+    /// Segment size is `1024 << segment_kb_log2` bytes, from the header.
+    pub segment_kb_log2: u8,
+    /// Shape table version, from the header.
+    pub shape_table_version: u8,
+    /// Hues in the palette: 4 (8 is reserved).
+    pub palette_hues: u8,
     /// Profile.
     pub profile: ProfileDto,
     /// Shape id of the dot field.
@@ -351,6 +373,13 @@ impl From<&FrameSpec> for FrameDto {
             session_id: h.session_id,
             segment_index: h.segment_index,
             packet_seed: h.packet_seed,
+            payload_len: h.payload_len,
+            segment_kb_log2: h.segment_kb_log2,
+            shape_table_version: h.shape_table_version,
+            palette_hues: match h.palette {
+                particlecode_core::Palette::Hues4 => 4,
+                particlecode_core::Palette::Hues8 => 8,
+            },
             profile: spec.profile.into(),
             shape_id: h.shape_id,
             is_static: h.is_static,
@@ -386,6 +415,8 @@ impl From<&FrameSpec> for FrameDto {
                         SwatchColor::White => SwatchColorDto::White,
                         SwatchColor::Black => SwatchColorDto::Black,
                     },
+                    anchor: s.anchor,
+                    slot: s.slot,
                 })
                 .collect(),
             header_dots: DotsDto::from_dots(&spec.header_dots),
@@ -445,6 +476,7 @@ pub struct PaletteDto {
 }
 
 /// The palette every painter must draw with.
+#[frb(sync)]
 pub fn palette() -> PaletteDto {
     PaletteDto {
         hues: colors::HUES4.iter().map(|&c| c.into()).collect(),

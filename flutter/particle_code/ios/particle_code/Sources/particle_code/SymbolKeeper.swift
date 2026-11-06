@@ -1,12 +1,14 @@
 import ParticleCodeFFI
 
-/// Keeps every `pc_*` C function in the linked app.
+/// Keeps the Rust library's C entry points in the linked app.
 ///
-/// Dart reaches the sender side (`pc_encoder_*`) through `DynamicLibrary.process()`, so
-/// nothing in native code calls those functions, and the linker is free to drop them: an
-/// archive member nobody references is not loaded, and `-dead_strip` removes unreachable
-/// functions from the ones that are. `register(with:)` calls `keep()`, which references
-/// every function declared in `particlecode.h` from live code.
+/// Dart reaches the sender through flutter_rust_bridge, whose C symbols it looks up with
+/// `DynamicLibrary.process()`; nothing in native code calls them, and the linker is free to
+/// drop them: an archive member nobody references is not loaded, and `-dead_strip` removes
+/// unreachable functions from the ones that are. `keep()` calls `pc_abi_version()`, which
+/// reads the Rust-side table in `crates/particlecode-ffi/src/frb_keep.rs` that holds every
+/// bridge symbol Dart needs. It also references every `pc_*` function declared in
+/// `particlecode.h`, so the C ABI stays available to native code in the app.
 ///
 /// The references sit behind `isEnabled`, a public mutable flag the optimizer cannot fold,
 /// and it is `false`, so none of these calls ever runs. Calls with `nil`/`0` arguments are

@@ -82,12 +82,12 @@ crates/particlecode-vision   camera image -> header + symbols + liveness (locate
 crates/particlecode-render   FrameSpec -> pixels (tiny-skia): PNG, animated GIF, SVG, PNG sequence + manifest; synthetic camera
 crates/particlecode-shapes   shape tool: SVG path -> lattice bitmaps, rule checks, synthetic validation, shapes.bin
 crates/particlecode-cli      the `particlecode` command
-crates/particlecode-ffi      flutter_rust_bridge-style API and a C ABI for the Flutter and Tauri apps
+crates/particlecode-ffi      flutter_rust_bridge API (the Flutter sender) and a C ABI for other hosts
 crates/particlecode-jni      Android JNI shim over the decoder (CameraX buffers read in place)
 crates/particlecode-wasm     browser sender: payload -> animated RGBA frames for a <canvas> (wasm-bindgen); scripts/build-wasm.sh
 android/                     Kotlin wrapper + CameraX analyzer (library module); scripts/build-android.sh
 apple/                       ParticleCodeKit Swift package + podspec over ParticleCodeFFI.xcframework; scripts/build-xcframework.sh
-flutter/particle_code/       Flutter plugin (sender in Dart over dart:ffi, scanner on the native pipelines) + example app
+flutter/particle_code/       Flutter plugin (sender over flutter_rust_bridge, scanner on the native pipelines) + example app
 examples/                    runnable examples and sample CBOR payloads
 fuzz/                        cargo-fuzz target for the header decoder
 ```
@@ -136,14 +136,17 @@ if let Some(lock) = particlecode_vision::locate(&yuv.y) {
 ## Flutter
 
 [`flutter/particle_code`](flutter/particle_code) is a Flutter plugin for Android and iOS. The
-sender encodes through the Rust library over `dart:ffi` and paints the animated code in Dart; the
-scanner is the native camera pipeline (CameraX, AVFoundation) and only reports progress and the
+sender encodes through the Rust library over [flutter_rust_bridge](https://pub.dev/packages/flutter_rust_bridge)
+(frames are built on Rust threads) and paints the animated code in Dart; the scanner is the native camera pipeline (CameraX, AVFoundation) and only reports progress and the
 final payload to Dart.
 
 <img src="docs/images/flutter_send.png" alt="The example app's Send tab showing a heart-shaped code" width="260">
 
 ```dart
 import 'package:particle_code/particle_code.dart';
+
+// Once, before using the sender (loads the Rust library).
+await ParticleCode.init();
 
 // Sender: show a payload as an animated field of dots.
 final encoder = ParticleEncoder.create(
