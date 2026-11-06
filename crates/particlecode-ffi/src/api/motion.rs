@@ -8,6 +8,8 @@
 //! [`FrameDto::frame_half_side`](super::dto::FrameDto::frame_half_side). Nothing here is
 //! accumulated: pass the painter's clock, so a dropped render frame never drifts the field.
 
+use flutter_rust_bridge::frb;
+
 use particlecode_core::layout::{ParticleBand, Point};
 use particlecode_core::motion::{self, Mood, MotionConfig};
 use serde::{Deserialize, Serialize};
@@ -59,6 +61,7 @@ impl From<MotionConfigDto> for MotionConfig {
 }
 
 /// Every optional layer on, breathing mood.
+#[frb(sync)]
 pub fn motion_config_all() -> MotionConfigDto {
     MotionConfigDto {
         mood: MoodDto::Breathing,
@@ -108,6 +111,7 @@ pub struct MotionConstants {
 }
 
 /// The constants of `particlecode_core::motion` plus the data-frame interval.
+#[frb(sync)]
 pub fn motion_constants() -> MotionConstants {
     MotionConstants {
         data_frame_interval: 0.1,
@@ -122,11 +126,13 @@ pub fn motion_constants() -> MotionConstants {
 
 /// The motion seed every painter must use for a session, so the app, the GIF packager and
 /// the web painter agree on direction and phase.
+#[frb(sync)]
 pub fn motion_seed(session_id: u16) -> u64 {
     motion::seed_from_session(session_id)
 }
 
 /// Offset of a dot at rest position `(x, y)` from its lattice point; length at most 0.12.
+#[frb(sync)]
 pub fn dot_offset(
     config: MotionConfigDto,
     seed: u64,
@@ -141,6 +147,7 @@ pub fn dot_offset(
 
 /// Offsets for many dots at once: `xs`/`ys` are rest positions, the result is interleaved
 /// `[dx0, dy0, dx1, dy1, ...]`. The shorter of `xs` and `ys` decides the count.
+#[frb(sync)]
 pub fn dot_offsets_batch(
     config: MotionConfigDto,
     seed: u64,
@@ -160,6 +167,7 @@ pub fn dot_offsets_batch(
 }
 
 /// Multiplier for a dot's radius at `(x, y)`, in `[0.95, 1.05]`.
+#[frb(sync)]
 pub fn dot_radius_scale(
     config: MotionConfigDto,
     seed: u64,
@@ -172,6 +180,7 @@ pub fn dot_radius_scale(
 }
 
 /// [`dot_radius_scale`] for many dots; one scale per `(xs[i], ys[i])`.
+#[frb(sync)]
 pub fn dot_radius_scales_batch(
     config: MotionConfigDto,
     seed: u64,
@@ -191,6 +200,7 @@ pub fn dot_radius_scales_batch(
 /// `from_angle` to `to_angle`; otherwise it wobbles around `to_angle` inside the band
 /// `band_inner..band_outer`.
 #[allow(clippy::too_many_arguments)] // mirrors the core function; flat for the bridge
+#[frb(sync)]
 pub fn particle_pose(
     seed: u64,
     t: f64,
@@ -219,24 +229,28 @@ pub fn particle_pose(
 
 /// Opacity of the new data frame `t_since_switch` seconds after the switch: 0 at the
 /// switch, 1 from 40 ms on.
+#[frb(sync)]
 pub fn crossfade_alpha(t_since_switch: f64) -> f64 {
     motion::crossfade_alpha(t_since_switch)
 }
 
 /// Opacity of a dot at `(x, y)`, `t_since_start` seconds into the session. Fully opaque
 /// from 600 ms on.
+#[frb(sync)]
 pub fn reveal_opacity(t_since_start: f64, x: f64, y: f64, half_side: f64) -> f64 {
     motion::reveal_opacity(t_since_start, Point::new(x, y), half_side)
 }
 
 /// Scale of anchor `anchor_index` (`0..3` hero, `3` center) at time `t`; 1.0 unless the
 /// heartbeat is on, never above 1.10.
+#[frb(sync)]
 pub fn anchor_scale(config: MotionConfigDto, t: f64, anchor_index: u32) -> f64 {
     motion::anchor_scale(&config.into(), t, anchor_index as usize)
 }
 
 /// How much a dot at `(x, y)` lightens (`0..=0.15`, fraction of the way to white)
 /// `t_since_segment_complete` seconds after a segment completed.
+#[frb(sync)]
 pub fn ripple_lighten(t_since_segment_complete: f64, x: f64, y: f64, half_side: f64) -> f64 {
     motion::ripple_lighten(t_since_segment_complete, Point::new(x, y), half_side)
 }

@@ -1,0 +1,15 @@
+# flutter_rust_bridge code generation for the sender API (crates/particlecode-ffi/src/api).
+#
+#   cd flutter/particle_code && flutter_rust_bridge_codegen generate
+#
+# The generator version must equal the `flutter_rust_bridge` Dart package and Rust crate
+# versions (2.13.0). Generated files are committed; CI regenerates and fails on a diff.
+# The Rust library is not built by frb: scripts/build-android.sh and
+# scripts/build-xcframework.sh ship it, and lib/src/native_library.dart loads it.
+rust_input: crate::api
+rust_root: ../../crates/particlecode-ffi
+dart_output: lib/src/rust
+web: false
+type_64bit_int: true
+add_mod_to_lib: false
+auto_upgrade_dependency: false

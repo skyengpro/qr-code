@@ -1,5 +1,7 @@
 //! The sender: payload bytes in, a deterministic stream of frames out.
 
+use flutter_rust_bridge::frb;
+
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use particlecode_core::FrameSpec;
@@ -25,6 +27,7 @@ impl ParticleEncoder {
     /// Random parts of the identity (session id, 32-byte key) and the liveness clock origin
     /// (the wall clock) are filled in unless `config` fixes them; fixing all three makes
     /// the frames fully deterministic.
+    #[frb(sync)]
     pub fn new(payload: Vec<u8>, config: EncoderConfig) -> Result<ParticleEncoder, FfiError> {
         let key = match config.key.as_deref() {
             Some(k) => Some(<[u8; 32]>::try_from(k).map_err(|_| {
@@ -51,45 +54,64 @@ impl ParticleEncoder {
 
     /// Frame `i`, with the liveness clock derived from the index (second
     /// `clock_origin + i / fps`). Deterministic.
+    #[frb(sync)]
     pub fn frame(&self, i: u32) -> FrameDto {
         FrameDto::from(&self.spec(i))
     }
 
     /// Frame `i` with the particles showing the liveness value of `unix_seconds`. Use the
     /// real wall clock when displaying live, so a verifier's clock agrees.
+    #[frb(sync)]
     pub fn frame_at(&self, i: u32, unix_seconds: u64) -> FrameDto {
         FrameDto::from(&self.session.frame_at(i, unix_seconds))
     }
 
+    /// Frame `i` built off the caller's thread: the bridge runs this on its Rust thread pool
+    /// and completes a Dart `Future`, so a painter can prefetch upcoming frames without
+    /// blocking its UI thread. `unix_seconds` as in [`frame_at`](Self::frame_at), or `None`
+    /// for the index-derived clock of [`frame`](Self::frame).
+    pub fn frame_async(&self, i: u32, unix_seconds: Option<u64>) -> FrameDto {
+        match unix_seconds {
+            Some(s) => self.frame_at(i, s),
+            None => self.frame(i),
+        }
+    }
+
     /// [`frame`](Self::frame) as the JSON text of the core `FrameSpec` (see
     /// [`crate::json::frame_json`]).
+    #[frb(sync)]
     pub fn frame_json(&self, i: u32) -> String {
         frame_json(&self.spec(i))
     }
 
     /// [`frame_at`](Self::frame_at) as JSON.
+    #[frb(sync)]
     pub fn frame_json_at(&self, i: u32, unix_seconds: u64) -> String {
         frame_json(&self.session.frame_at(i, unix_seconds))
     }
 
     /// Frames in one pass over all segments. Indices beyond it continue with fresh repair
     /// symbols, so the stream never repeats.
+    #[frb(sync)]
     pub fn frames_per_pass(&self) -> u32 {
         self.session.frames_per_pass()
     }
 
     /// Session id carried by every header.
+    #[frb(sync)]
     pub fn session_id(&self) -> u16 {
         self.session.session_id()
     }
 
     /// The 32-byte session key (share it with verifiers out of band; see
     /// `liveness_verify`).
+    #[frb(sync)]
     pub fn key(&self) -> Vec<u8> {
         self.session.key().to_vec()
     }
 
     /// Profile, shape, dot count, block size and segment layout.
+    #[frb(sync)]
     pub fn info(&self) -> EncoderInfo {
         let band = self.session.dot_order().particle_band();
         EncoderInfo {

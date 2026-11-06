@@ -1,5 +1,7 @@
 //! The receiver: symbols in, progress and payload out.
 
+use flutter_rust_bridge::frb;
+
 use particlecode_core::{DecodeError, Progress, Receiver, Sym3};
 use particlecode_vision::{PlaneRef, VisionError, YuvFrame, YuvRef, locate, read, sharpness};
 
@@ -24,6 +26,7 @@ impl Default for ParticleDecoder {
 
 impl ParticleDecoder {
     /// A decoder that has not seen any frame yet, with the built-in shape table.
+    #[frb(sync)]
     pub fn new() -> ParticleDecoder {
         ParticleDecoder {
             rx: Receiver::new(),
@@ -31,6 +34,7 @@ impl ParticleDecoder {
     }
 
     /// Forget the transfer and start over.
+    #[frb(sync)]
     pub fn reset(&mut self) {
         self.rx = Receiver::new();
     }
@@ -217,11 +221,13 @@ impl ParticleDecoder {
     /// Payload bytes newly delivered in order since the last call (segment by segment, so
     /// large payloads can be consumed while the transfer is still running). After
     /// [`ProgressDto::Done`] the concatenation of everything returned equals the payload.
+    #[frb(sync)]
     pub fn take_ready(&mut self) -> Option<Vec<u8>> {
         self.rx.take_ready()
     }
 
     /// Session id of the transfer being received, once a frame was accepted.
+    #[frb(sync)]
     pub fn session_id(&self) -> Option<u16> {
         self.rx.session_id()
     }

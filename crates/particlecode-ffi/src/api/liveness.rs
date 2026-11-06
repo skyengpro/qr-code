@@ -1,5 +1,7 @@
 //! Liveness verification: checking the rolling value the particles show.
 
+use flutter_rust_bridge::frb;
+
 use particlecode_core::liveness;
 
 /// Whether `rolling` (the 16-bit value read off the particles) is the value for some second
@@ -8,6 +10,7 @@ use particlecode_core::liveness;
 /// The key must be exactly 32 bytes (see
 /// [`ParticleEncoder::key`](super::encoder::ParticleEncoder::key)); any other length
 /// returns `false`. `skew = 0` accepts only the current second.
+#[frb(sync)]
 pub fn liveness_verify(key: Vec<u8>, rolling: u16, now_unix: u64, skew: u64) -> bool {
     <[u8; 32]>::try_from(key.as_slice())
         .is_ok_and(|key| liveness::verify(&key, rolling, now_unix, skew))

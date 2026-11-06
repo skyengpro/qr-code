@@ -1,5 +1,7 @@
 //! The one error type of the API.
 
+use flutter_rust_bridge::frb;
+
 use particlecode_core::EncodeError;
 
 /// Why an FFI call failed. Decoding never fails this way: a bad frame is reported as
@@ -22,6 +24,7 @@ pub enum FfiError {
 
 impl FfiError {
     /// Human-readable description, for logs and UI.
+    #[frb(sync)]
     pub fn message(&self) -> String {
         self.to_string()
     }

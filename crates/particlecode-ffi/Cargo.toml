@@ -19,6 +19,8 @@ particlecode-vision.workspace = true
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 thiserror = { workspace = true, features = ["std"] }
+# Runtime of the generated Dart bindings (src/frb_generated.rs).
+flutter_rust_bridge.workspace = true
 
 [dev-dependencies]
 particlecode-render.workspace = true
