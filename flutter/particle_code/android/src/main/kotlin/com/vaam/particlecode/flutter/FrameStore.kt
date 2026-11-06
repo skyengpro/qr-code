@@ -1,5 +1,6 @@
 package com.vaam.particlecode.flutter
 
+import android.os.SystemClock
 import androidx.camera.core.ImageProxy
 import java.util.concurrent.atomic.AtomicLong
 
@@ -15,13 +16,18 @@ internal class FrameStore {
     private val lock = Any()
     private var held: ImageProxy? = null
     private var heldId = 0L
+    private var heldReceivedNanos = 0L
 
-    /** Take [image] if no frame is in flight and return its id; otherwise close it and return -1. */
-    fun offer(image: ImageProxy): Long {
+    /**
+     * Take [image] if no frame is in flight and return its id; otherwise close it and return -1.
+     * [receivedNanos] (`SystemClock.elapsedRealtimeNanos()` at receipt) is kept for [release].
+     */
+    fun offer(image: ImageProxy, receivedNanos: Long): Long {
         synchronized(lock) {
             if (held == null) {
                 held = image
                 heldId = NEXT_ID.incrementAndGet()
+                heldReceivedNanos = receivedNanos
                 return heldId
             }
         }
@@ -32,18 +38,26 @@ internal class FrameStore {
     /** Whether the frame with [id] is still the one in flight. */
     fun isHeld(id: Long): Boolean = synchronized(lock) { held != null && heldId == id }
 
-    /** Close the frame with [id]; other ids are ignored. */
-    fun release(id: Long) {
+    /**
+     * Close the frame with [id] and return the nanoseconds it was held (receipt to now, both
+     * `elapsedRealtimeNanos`); null (ignored) for other ids.
+     */
+    fun release(id: Long): Long? {
+        var received = 0L
         val image = synchronized(lock) {
             if (held != null && heldId == id) {
                 val h = held
                 held = null
+                received = heldReceivedNanos
                 h
             } else {
                 null
             }
         }
-        image?.close()
+        if (image == null) return null
+        val heldNanos = SystemClock.elapsedRealtimeNanos() - received
+        image.close()
+        return heldNanos
     }
 
     /** Close whatever is held (new session, engine gone). */
