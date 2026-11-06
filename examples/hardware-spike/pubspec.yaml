@@ -1,0 +1,30 @@
+name: particle_code_hardware_spike
+description: Hardware benchmark spike for the particle_code plugin. Records repeatable sender/receiver trials and exports a report bundle.
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.10.0
+  flutter: ">=3.38.0"
+
+dependencies:
+  archive: ^4.6.0
+  crypto: ^3.0.8
+  device_info_plus: ^13.3.0
+  flutter:
+    sdk: flutter
+  package_info_plus: ^10.2.2
+  particle_code:
+    path: ../../flutter/particle_code
+  path_provider: ^2.1.6
+  share_plus: ^13.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
