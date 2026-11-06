@@ -754,6 +754,7 @@ void main() {
       'timestampClock': 'android_realtime',
       'receivedNanos': 9004000000,
       'skippedBefore': 3,
+      'droppedByOutputBefore': 2,
     };
 
     test('ScanCameraStarted once per start, with startup and camera', () async {
@@ -834,6 +835,7 @@ void main() {
       expect(f.bridge, const Duration(milliseconds: 42)); // around feed only
       expect(f.held, const Duration(microseconds: 12500)); // from the release
       expect(f.skippedBefore, 3);
+      expect(f.droppedByOutputBefore, 2);
       expect(f.buffer!.format, 'YUV_420_888');
       expect(f.buffer!.rotationDegrees, 90);
       expect(f.buffer!.cameraId, '0');
@@ -877,6 +879,7 @@ void main() {
       expect(f.capture, isNull);
       expect(f.received, isNull);
       expect(f.skippedBefore, 0);
+      expect(f.droppedByOutputBefore, isNull);
       expect(f.buffer!.format, 'unknown');
       expect(f.buffer!.rotationDegrees, isNull);
       expect(f.buffer!.cameraId, isNull);

@@ -198,6 +198,7 @@ class ScanFrameDiagnostics extends ScanDiagnostic {
     this.capture,
     this.received,
     this.skippedBefore = 0,
+    this.droppedByOutputBefore,
     this.bridge,
     this.decode,
     this.held,
@@ -231,6 +232,11 @@ class ScanFrameDiagnostics extends ScanDiagnostic {
   /// because a frame was in flight. Frames the camera pipeline dropped before delivery are
   /// not observable and not counted.
   final int skippedBefore;
+
+  /// iOS only: frames AVFoundation reported as dropped before delivering them
+  /// (`captureOutput(_:didDrop:from:)`) since the previous frame event. `null` where the
+  /// platform has no such callback (Android).
+  final int? droppedByOutputBefore;
 
   /// Dart monotonic round trip of the `feedCameraFrame` call (bridge + decode).
   final Duration? bridge;

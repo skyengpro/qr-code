@@ -447,6 +447,7 @@ class ParticleScanner {
     // Progress is the scanner's sticky state; a result dropped by reset() has none.
     final progress = result == null || r.current;
     final skipped = m['skippedBefore'];
+    final dropped = m['droppedByOutputBefore'];
     _emitDiagnostic(
       ScanFrameDiagnostics(
         frameId: r.id,
@@ -456,6 +457,7 @@ class ParticleScanner {
         capture: _capture(m),
         received: _received(m),
         skippedBefore: skipped is int ? skipped : 0,
+        droppedByOutputBefore: dropped is int ? dropped : null,
         bridge: r.bridge,
         decode: result == null ? null : _decodeTimings(result.timings),
         held: r.held,
