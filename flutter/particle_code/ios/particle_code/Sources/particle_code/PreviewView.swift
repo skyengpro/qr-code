@@ -44,7 +44,7 @@ private final class PreviewPlatformView: NSObject, FlutterPlatformView {
 final class PreviewView: UIView {
     override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
 
-    /// `layerClass` guarantees the type. Anchors are converted through this layer.
+    /// `layerClass` guarantees the type. `toPreview` is computed through this layer.
     var previewLayer: AVCaptureVideoPreviewLayer {
         layer as! AVCaptureVideoPreviewLayer  // swiftlint:disable:this force_cast
     }
@@ -90,7 +90,7 @@ final class PreviewView: UIView {
     }
 
     /// Aligns the preview connection with the interface orientation. Only the preview is
-    /// rotated, never the data output (see `ScannerController.normalizedAnchors`).
+    /// rotated, never the data output (see `ScannerController.toPreview`).
     private func updateRotation() {
         guard let connection = previewLayer.connection,
             let orientation = window?.windowScene?.interfaceOrientation

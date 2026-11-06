@@ -4,10 +4,8 @@
 // SwiftPM is enabled (the default); CocoaPods users get the same sources through
 // ../particle_code.podspec.
 //
-// The ParticleCodeFFI binary target is the Rust C ABI (crates/particlecode-ffi) as a static
-// xcframework. It is not committed: `scripts/build-xcframework.sh --flutter` copies it into
-// Frameworks/ next to this file. Sources/particle_code/ParticleCodeKit/ holds per-file symlinks
-// to apple/ParticleCodeKit/Sources/ParticleCodeKit, compiled into this target.
+// The plugin is pure Swift over AVFoundation: it contains no Rust and links no Rust library.
+// The Rust library is built and bundled by the Native Assets hook (hook/build.dart).
 
 import PackageDescription
 
@@ -23,27 +21,20 @@ let package = Package(
         .package(name: "FlutterFramework", path: "../FlutterFramework")
     ],
     targets: [
-        .binaryTarget(
-            name: "ParticleCodeFFI",
-            path: "Frameworks/ParticleCodeFFI.xcframework"
-        ),
         .target(
             name: "particle_code",
             dependencies: [
-                .product(name: "FlutterFramework", package: "FlutterFramework"),
-                "ParticleCodeFFI",
+                .product(name: "FlutterFramework", package: "FlutterFramework")
             ],
             resources: [
                 .process("PrivacyInfo.xcprivacy")
             ],
             linkerSettings: [
-                // The Rust standard library needs libiconv on Apple platforms.
-                .linkedLibrary("iconv"),
                 .linkedFramework("AVFoundation"),
                 .linkedFramework("CoreMedia"),
                 .linkedFramework("CoreVideo"),
                 .linkedFramework("UIKit"),
             ]
-        ),
+        )
     ]
 )
