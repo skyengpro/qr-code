@@ -5,14 +5,16 @@ publish_to: none
 repository: https://github.com/vaam-apps/qr-code
 
 environment:
-  sdk: ^3.9.0
-  flutter: ">=3.35.0"
+  sdk: ^3.10.0
+  flutter: ">=3.38.0"
 
 dependencies:
   flutter:
     sdk: flutter
   # Must equal flutter_rust_bridge_codegen and the Rust crate (see flutter_rust_bridge.yaml).
   flutter_rust_bridge: 2.13.0
+  # Native Assets builder for hook/build.dart (compiles crates/particlecode-ffi with cargo).
+  flutter_rust_bridge_hooks: 2.13.0
   freezed_annotation: ^3.1.0
 
 dev_dependencies:

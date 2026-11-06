@@ -175,3 +175,76 @@ fn lighting_failures_map_to_a_user_hint() {
     assert!(vision_hint(&VisionError::Truncated).contains("back"));
     assert_eq!(vision_hint(&VisionError::UnknownShape(9)), UPDATE_HINT);
 }
+
+/// The pointer-handoff entry point: planes passed by address, `U` and `V` aliasing one
+/// interleaved `VU` buffer as Android's `YUV_420_888` does, read in place.
+#[test]
+fn camera_frame_by_address_completes_a_session() {
+    use crate::api::dto::CameraFrameDto;
+    let data = payload(2600);
+    let enc = encoder(&data);
+    run(&data, |dec, i| {
+        let p = nv21(&camera_rgb(&enc, i, SIZE_PX), 8);
+        let vu = &p.v;
+        let frame = CameraFrameDto {
+            width: p.width,
+            height: p.height,
+            y_address: p.y.as_ptr() as usize,
+            y_len: p.y.len(),
+            v_address: vu.as_ptr() as usize,
+            v_len: vu.len(),
+            u_address: vu.as_ptr() as usize + 1,
+            u_len: vu.len() - 1,
+            y_stride: p.y_stride,
+            uv_stride: p.uv_stride,
+            uv_pixel_stride: p.uv_pixel_stride,
+        };
+        dec.feed_camera_frame(frame)
+    });
+}
+
+/// Null addresses, empty planes and planes shorter than the dimensions say are rejected
+/// before anything is read.
+#[test]
+fn unusable_camera_frames_are_rejected_before_reading() {
+    use crate::api::dto::CameraFrameDto;
+    let luma = vec![0u8; 64 * 64];
+    let chroma = vec![0u8; 32 * 32];
+    let good = CameraFrameDto {
+        width: 64,
+        height: 64,
+        y_address: luma.as_ptr() as usize,
+        y_len: luma.len(),
+        u_address: chroma.as_ptr() as usize,
+        u_len: chroma.len(),
+        v_address: chroma.as_ptr() as usize,
+        v_len: chroma.len(),
+        y_stride: 64,
+        uv_stride: 32,
+        uv_pixel_stride: 1,
+    };
+    let mut dec = ParticleDecoder::new();
+    for bad in [
+        CameraFrameDto {
+            y_address: 0,
+            ..good
+        },
+        CameraFrameDto { u_len: 0, ..good },
+        // Claims a taller image than the luma buffer holds.
+        CameraFrameDto { height: 65, ..good },
+        CameraFrameDto {
+            y_len: usize::MAX,
+            ..good
+        },
+    ] {
+        let r = dec.feed_camera_frame(bad);
+        assert!(!r.locked);
+        assert!(
+            matches!(r.progress, ProgressDto::Rejected { .. }),
+            "{bad:?}"
+        );
+    }
+    // The well-formed (blank) frame is read and simply finds no code.
+    let r = dec.feed_camera_frame(good);
+    assert!(matches!(r.progress, ProgressDto::Rejected { .. }));
+}

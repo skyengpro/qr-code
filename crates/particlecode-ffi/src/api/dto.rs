@@ -122,8 +122,8 @@ impl From<DisplayInfoDto> for DisplayInfo {
 /// Everything [`ParticleEncoder::new`](super::encoder::ParticleEncoder::new) needs besides
 /// the payload. Mirrors [`SessionConfig`] plus the session identity and display.
 ///
-/// Every field has a default, so the JSON form of the C ABI may omit any of them
-/// (`{}` is a valid config).
+/// Every field has a default, so a JSON config may omit any of them (`{}` is a valid
+/// config).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EncoderConfig {
@@ -601,7 +601,37 @@ impl From<particlecode_vision::Liveness> for LivenessDto {
     }
 }
 
-/// What happened to one camera frame (`feed_yuv`, `feed_rgba`).
+/// A camera frame handed over by address: the planes stay in the camera's own memory and
+/// the decoder reads them in place (see `ParticleDecoder::feed_camera_frame` for the
+/// contract). Layout as in `ParticleDecoder::feed_yuv`: YUV 4:2:0, chroma at half resolution,
+/// chroma sample `(col, row)` at `row * uv_stride + col * uv_pixel_stride`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CameraFrameDto {
+    /// Image width in pixels.
+    pub width: u32,
+    /// Image height in pixels.
+    pub height: u32,
+    /// Address of the first luma byte.
+    pub y_address: usize,
+    /// Readable bytes at `y_address`.
+    pub y_len: usize,
+    /// Address of the first Cb sample.
+    pub u_address: usize,
+    /// Readable bytes at `u_address`.
+    pub u_len: usize,
+    /// Address of the first Cr sample.
+    pub v_address: usize,
+    /// Readable bytes at `v_address`.
+    pub v_len: usize,
+    /// Bytes between luma rows.
+    pub y_stride: u32,
+    /// Bytes between chroma rows.
+    pub uv_stride: u32,
+    /// Bytes between chroma samples in a row: 1 planar, 2 interleaved.
+    pub uv_pixel_stride: u32,
+}
+
+/// What happened to one camera frame (`feed_yuv`, `feed_camera_frame`, `feed_rgba`).
 ///
 /// A frame that cannot be located or read is a normal outcome: `progress` is then
 /// `Rejected`, `reject_reason` says why and `hint` (if any) is text for the user.

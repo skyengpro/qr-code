@@ -1,136 +1,77 @@
 # particlecode-ffi
 
-The foreign-function surface of Particle Code. Everything is a thin reshaping of
-`particlecode-core` (and, from phase 2, `particlecode-vision`) into types that cross a
-language boundary cheaply.
+The Rust side of the Flutter plugin [`flutter/particle_code`](../../flutter/particle_code),
+bridged with [flutter_rust_bridge](https://pub.dev/packages/flutter_rust_bridge) v2. Everything
+is a thin reshaping of `particlecode-core` and `particlecode-vision` into types that cross the
+Dart boundary cheaply.
 
-| Module | What | Consumers |
-| --- | --- | --- |
-| `api` | `flutter_rust_bridge` v2 style API: opaque `ParticleEncoder` / `ParticleDecoder`, plain DTOs, motion helpers, `liveness_verify` | Flutter (generated Dart), Tauri backend (plain Rust) |
-| `capi` + `include/particlecode.h` | C ABI over the same handles, JSON in/out | anything that can load a C library |
-| `json` | `frame_json(&FrameSpec)`, the serde form of a frame | webview painters, debugging |
+| Module | What |
+| --- | --- |
+| `api` | opaque `ParticleEncoder` / `ParticleDecoder`, plain DTOs, motion helpers, `liveness_verify` |
+| `json` | `frame_json(&FrameSpec)`, the serde form of a frame (debugging) |
+| `frb_generated` | written by `flutter_rust_bridge_codegen`; do not edit |
 
-The crate builds as `lib`, `cdylib` and `staticlib`. `unsafe` exists only in `capi`, and
-every block carries a `// SAFETY:` comment.
+## Build
 
-## Flutter (flutter_rust_bridge v2)
-
-This crate does **not** depend on `flutter_rust_bridge`; the generator reads the plain
-Rust in `crate::api` from the Flutter repository:
+The crate is a `cdylib`. The plugin's Native Assets hook
+([`hook/build.dart`](../../flutter/particle_code/hook/build.dart)) runs `cargo build` for
+each target the app is built for and bundles the library; there is no prebuilt binary and no
+build script to run. Regenerate the bindings after changing `api`:
 
 ```sh
-flutter_rust_bridge_codegen generate \
-    --rust-input crate::api \
-    --rust-root path/to/crates/particlecode-ffi \
-    --dart-output lib/src/rust
+cd flutter/particle_code
+flutter_rust_bridge_codegen generate   # reads flutter_rust_bridge.yaml
 ```
+
+The crate, the Dart package `flutter_rust_bridge` and the code generator are pinned to the
+same version (`=2.13.0`); the generated code refuses to load against any other.
+
+## API
 
 Opaque handles are the structs with private fields (`ParticleEncoder`, `ParticleDecoder`);
-everything else is translated by value. Conventions that keep the generated Dart small:
-counts are `u32`, times are `f64` seconds, dots are structure-of-arrays (`Float64List` /
-`Uint8List` on the Dart side), the error type is `FfiError` (`message()` for UI text).
+everything else is translated by value. Counts are `u32`, times are `f64` seconds, dots are
+structure-of-arrays (`Float64List` / `Uint8List` in Dart), errors are `FfiError`.
 
-Sender:
+Sender (sync calls are cheap; `frameAsync` builds a frame on a Rust thread):
 
 ```dart
-final enc = await ParticleEncoder.newInstance(payload: cbor, config: EncoderConfig(...));
-final info = enc.info();                       // profile, dots, block size, segments
-final frame = enc.frameAt(i, unixSeconds: nowSecs);   // FrameDto for the painter
+final enc = ParticleEncoder(payload: cbor, config: EncoderConfig(...));
+final info = enc.info();                              // profile, dots, block size, segments
+final frame = await enc.frameAsync(i: i, unixSeconds: nowSecs);   // FrameDto for the painter
 ```
 
-Receiver, from camera planes (the camera plugin's `YUV_420_888` planes map straight onto
-the arguments; `uvPixelStride` is 2 for NV21/NV12 and 1 for I420):
+Receiver, from a camera frame held by the plugin's native code (pointer handoff):
 
 ```dart
-final r = dec.feedYuv(width: w, height: h, y: p0.bytes, u: p1.bytes, v: p2.bytes,
-    yStride: p0.bytesPerRow, uvStride: p1.bytesPerRow, uvPixelStride: p1.bytesPerPixel);
+final r = await dec.feedCameraFrame(frame: CameraFrameDto(
+    width: w, height: h,
+    yAddress: yAddr, yLen: yLen, uAddress: uAddr, uLen: uLen, vAddress: vAddr, vLen: vLen,
+    yStride: yStride, uvStride: uvStride, uvPixelStride: uvPixelStride));
+// release the native frame now, not before
 // r.locked, r.anchors (image px, for the overlay), r.sharpness, r.liveness,
 // r.progress, r.rejectReason, r.hint ("Too dark or too much glare ...")
 ```
 
-For NV12 (iOS), pass the interleaved UV plane as `u` and the same bytes from offset 1 as
-`v`. The generated bindings copy each byte vector once, so call `feedYuv` on a worker
-isolate. A frame that cannot be located or read is a normal result, not an exception:
-`progress` is `rejected`, with `rejectReason` for logs and `hint` for the user. Keep the
-sharpest of the ~3 captures of each 100 ms data frame (`r.sharpness`) if you feed
-selectively.
+`feed_camera_frame` reads the planes in place on a Rust worker thread: no copy into Dart, no
+copy across the bridge. The caller guarantees that every address points at `len` readable
+bytes that stay valid and unchanged until the returned future completes; Rust checks for null
+and empty planes and that the lengths cover the dimensions and strides, and rejects the frame
+otherwise. `uvPixelStride` is 2 for interleaved chroma (Android NV21-like `YUV_420_888`, iOS
+NV12: pass the interleaved plane as `u` and the same address + 1 as `v`, or the reverse) and 1
+for planar I420. `feed_yuv` (owned planes) and `feed_rgba` exist for tests and stills.
+
+A frame that cannot be located or read is a normal result, not an exception: `progress` is
+`rejected`, with `rejectReason` for logs and `hint` for the user. Payload bytes stream out of
+`takeReady()` segment by segment; after `done`, everything taken equals the payload.
 
 Symbol level, if the host classified the dots itself:
 
 ```dart
-final dec = ParticleDecoder();
-final p = dec.feedSymbols(symbols: syms, confidences: conf);
-// p is ProgressDto.rejected / .accepted(have, need, segmentsDone, segmentsTotal) / .done(payload)
-final bytes = dec.takeReady();                 // payload streamed segment by segment
+final p = await dec.feedSymbols(symbols: syms, confidences: conf);
+// rejected / accepted(have, need, segmentsDone, segmentsTotal) / done(payload)
 ```
 
-Keep frb's default async mode (a Rust thread pool) for `frame*` and
-`feed*`: building a frame at profile L is a few milliseconds of Reed-Solomon, which does not
-belong on the UI isolate. Prefetch the next frame while the current one is shown.
-
-## Tauri
-
-Two options, to be picked after measuring which keeps 30 fps on the vendor's hardware:
-
-1. **Rust dependency (default).** Add `particlecode-ffi` to the backend crate and call
-   `api::encoder::ParticleEncoder` / `api::decoder::ParticleDecoder` from `#[tauri::command]`
-   functions. For the sender, expose one command per frame returning `FrameDto` (it is
-   `Serialize`) or `frame_json`; the webview paints it on a canvas. The `ParticleEncoder`
-   is `Send + Sync`: keep it in Tauri state. For the receiver, grab webcam frames as RGBA
-   (`getUserMedia` plus a canvas `getImageData`, or a native capture crate) and call
-   `ParticleDecoder::feed_rgba(width, height, rgba)` from a command; keep the decoder behind a
-   `Mutex` in Tauri state. Each call returns a `FrameResultDto` with the overlay anchors, the
-   progress and the hint text.
-2. **wasm (later).** `particlecode-core` is `no_std + alloc`, so the decoder can be built for
-   `wasm32-unknown-unknown` and run in the webview next to the camera stream; that needs a
-   wasm-bindgen wrapper and is not part of this crate yet.
-
-The C ABI (`include/particlecode.h`) is also available when a Tauri plugin prefers to load
-the `cdylib`.
-
-## C ABI
-
-```c
-char *err = NULL;
-PcEncoder *enc = pc_encoder_new(payload, len, "{}", 2, &err);   // err via pc_string_free
-char *json = pc_encoder_frame_json(enc, 0);                      // pc_string_free
-...
-PcDecoder *dec = pc_decoder_new();
-int32_t st = pc_decoder_feed_symbols(dec, syms, NULL, n);  // PC_REJECTED / PC_ACCEPTED / PC_DONE
-```
-
-* NULL pointers are checked and reported (NULL return or a negative `PC_ERR_*`); panics are
-  caught at the boundary (`PC_ERR_PANIC`).
-* The config is JSON; every field is optional and `{}` (or NULL with length 0) means
-  defaults:
-
-  ```json
-  {
-    "segment_kb_log2": 3, "profile": "M", "fps": 10, "is_static": false,
-    "shape": {"kind": "require", "id": 0},
-    "repair_per_pass": 2, "min_pitch_mm": 1.6,
-    "display": {"width_px": 1080, "height_px": 2400, "width_mm": 68.0, "height_mm": 151.0},
-    "session_id": 4660, "key": [1, 2, 3, "... 32 numbers ..."],
-    "clock_origin_unix": 1700000000
-  }
-  ```
-
-  `profile` is `"S"`, `"M"`, `"L"` or `null` (pick from `display`). `shape` is `require`,
-  `prefer` (`id`) or `auto` (`ids`). Omitted `session_id`, `key` and `clock_origin_unix` are
-  random / the wall clock; fixing all three makes frames deterministic.
-* Frame JSON is the serde form of the core `FrameSpec` (colors as indices, lattice
-  coordinates `q`/`r` included). The `api` DTO (`FrameDto`) is the flattened painter form.
-* Camera frames: `pc_decoder_feed_yuv(dec, w, h, y, y_len, u, u_len, v, v_len, y_stride,
-  uv_stride, uv_pixel_stride, &out)` and `pc_decoder_feed_rgba(dec, w, h, rgba, len, &out)`
-  (desktop / webcam, Tauri). They return `PC_REJECTED` / `PC_ACCEPTED` / `PC_DONE`, or
-  `PC_ERR_NULL` / `PC_ERR_INVALID` for NULL pointers and sizes that do not fit the buffers.
-  `out` (optional) is a `PcFrameResult`: lock state, profile, shape, anchors in image px,
-  sharpness, liveness. `pc_decoder_reject_reason` and `pc_decoder_hint` give the technical
-  reason and the user-facing advice; `pc_decoder_progress` the counts. Camera memory is
-  borrowed, not copied (interleaved chroma is de-interleaved into a small scratch buffer).
-* The payload comes out of `pc_decoder_take_ready`: after `PC_DONE`, the concatenation of
-  everything taken equals the payload.
-* A handle must not be used by two threads at once.
+A handle must not be used by two calls at once; frb's opaque-handle locking enforces it.
 
 ## Painter contract
 

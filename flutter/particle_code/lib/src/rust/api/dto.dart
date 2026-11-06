@@ -9,7 +9,7 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'dto.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `from_dots`, `rejected_because`, `rejected`, `session_config`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 
 /// The palette every painter must draw with.
 PaletteDto palette() => RustLib.instance.api.crateApiDtoPalette();
@@ -64,6 +64,90 @@ class AnchorDto {
           ringIn == other.ringIn &&
           ringOut == other.ringOut &&
           pupilR == other.pupilR;
+}
+
+/// A camera frame handed over by address: the planes stay in the camera's own memory and
+/// the decoder reads them in place (see `ParticleDecoder::feed_camera_frame` for the
+/// contract). Layout as in `ParticleDecoder::feed_yuv`: YUV 4:2:0, chroma at half resolution,
+/// chroma sample `(col, row)` at `row * uv_stride + col * uv_pixel_stride`.
+class CameraFrameDto {
+  /// Image width in pixels.
+  final int width;
+
+  /// Image height in pixels.
+  final int height;
+
+  /// Address of the first luma byte.
+  final int yAddress;
+
+  /// Readable bytes at `y_address`.
+  final int yLen;
+
+  /// Address of the first Cb sample.
+  final int uAddress;
+
+  /// Readable bytes at `u_address`.
+  final int uLen;
+
+  /// Address of the first Cr sample.
+  final int vAddress;
+
+  /// Readable bytes at `v_address`.
+  final int vLen;
+
+  /// Bytes between luma rows.
+  final int yStride;
+
+  /// Bytes between chroma rows.
+  final int uvStride;
+
+  /// Bytes between chroma samples in a row: 1 planar, 2 interleaved.
+  final int uvPixelStride;
+
+  const CameraFrameDto({
+    required this.width,
+    required this.height,
+    required this.yAddress,
+    required this.yLen,
+    required this.uAddress,
+    required this.uLen,
+    required this.vAddress,
+    required this.vLen,
+    required this.yStride,
+    required this.uvStride,
+    required this.uvPixelStride,
+  });
+
+  @override
+  int get hashCode =>
+      width.hashCode ^
+      height.hashCode ^
+      yAddress.hashCode ^
+      yLen.hashCode ^
+      uAddress.hashCode ^
+      uLen.hashCode ^
+      vAddress.hashCode ^
+      vLen.hashCode ^
+      yStride.hashCode ^
+      uvStride.hashCode ^
+      uvPixelStride.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CameraFrameDto &&
+          runtimeType == other.runtimeType &&
+          width == other.width &&
+          height == other.height &&
+          yAddress == other.yAddress &&
+          yLen == other.yLen &&
+          uAddress == other.uAddress &&
+          uLen == other.uLen &&
+          vAddress == other.vAddress &&
+          vLen == other.vLen &&
+          yStride == other.yStride &&
+          uvStride == other.uvStride &&
+          uvPixelStride == other.uvPixelStride;
 }
 
 /// Physical display information used to pick a profile. Mirrors [`DisplayInfo`].
@@ -166,8 +250,8 @@ class DotsDto {
 /// Everything [`ParticleEncoder::new`](super::encoder::ParticleEncoder::new) needs besides
 /// the payload. Mirrors [`SessionConfig`] plus the session identity and display.
 ///
-/// Every field has a default, so the JSON form of the C ABI may omit any of them
-/// (`{}` is a valid config).
+/// Every field has a default, so a JSON config may omit any of them (`{}` is a valid
+/// config).
 class EncoderConfig {
   /// Segment size is `1024 << segment_kb_log2` bytes (`0..=15`). Default 3 (8 KiB).
   final int segmentKbLog2;
@@ -497,7 +581,7 @@ class FrameDto {
           particles == other.particles;
 }
 
-/// What happened to one camera frame (`feed_yuv`, `feed_rgba`).
+/// What happened to one camera frame (`feed_yuv`, `feed_camera_frame`, `feed_rgba`).
 ///
 /// A frame that cannot be located or read is a normal outcome: `progress` is then
 /// `Rejected`, `reject_reason` says why and `hint` (if any) is text for the user.

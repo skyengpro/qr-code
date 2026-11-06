@@ -1,0 +1,19 @@
+# Read by the Flutter plugin's Native Assets hook (flutter/particle_code/hook/build.dart):
+# native_toolchain_rust requires an exact channel and the list of targets it may build.
+# Keep `channel` equal to the workspace rust-toolchain.toml.
+[toolchain]
+channel = "1.97.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
+targets = [
+  "aarch64-linux-android",
+  "armv7-linux-androideabi",
+  "x86_64-linux-android",
+  "aarch64-apple-ios",
+  "aarch64-apple-ios-sim",
+  "x86_64-apple-ios",
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+]

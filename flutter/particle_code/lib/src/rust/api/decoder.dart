@@ -16,6 +16,22 @@ abstract class ParticleDecoder implements RustOpaqueInterface {
   static Future<ParticleDecoder> default_() =>
       RustLib.instance.api.crateApiDecoderParticleDecoderDefault();
 
+  /// Feed one camera frame **in place**: the planes are read straight from the camera's
+  /// memory at the addresses in `frame`, with no copy (pointer handoff; see the plugin's
+  /// `PROTOCOL.md`). The bridge runs this on its Rust thread pool, so the Dart `Future`
+  /// completes once the frame has been decoded.
+  ///
+  /// # Contract
+  ///
+  /// The caller guarantees that each `*_address` points to at least `*_len` readable bytes
+  /// that stay valid and unchanged until the returned `Future` completes: the plugin's
+  /// native camera code holds the frame (Android `ImageProxy`, iOS locked `CVPixelBuffer`)
+  /// until Dart releases it after this call. The decoder checks that no address is null
+  /// and that the lengths are consistent with the dimensions and strides before it reads
+  /// anything; a frame failing those checks is a rejection, never an error. Nothing is read
+  /// outside the stated lengths, and nothing is written.
+  Future<FrameResultDto> feedCameraFrame({required CameraFrameDto frame});
+
   /// Feed one RGBA8 camera frame (`4 * width * height` tightly packed bytes), for desktop
   /// and webcam capture. Alpha is ignored. See [`feed_yuv`](Self::feed_yuv) for the
   /// result.

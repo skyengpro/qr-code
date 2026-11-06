@@ -1,6 +1,5 @@
-// Runs the real Rust encoder through flutter_rust_bridge. Build the host library first:
-//   cargo build -p particlecode-ffi
-// (or point $PARTICLECODE_LIB at it). The plugin finds target/debug by searching upward.
+// Runs the real Rust encoder through flutter_rust_bridge. `flutter test` builds it first
+// through the plugin's Native Assets hook.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:particle_code/particle_code.dart';

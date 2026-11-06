@@ -19,7 +19,6 @@ particlecode-vision = { path = "crates/particlecode-vision" }
 particlecode-render = { path = "crates/particlecode-render" }
 particlecode-shapes = { path = "crates/particlecode-shapes" }
 particlecode-ffi = { path = "crates/particlecode-ffi" }
-particlecode-wasm = { path = "crates/particlecode-wasm" }
 
 # Core (no_std + alloc friendly)
 raptorq = { version = "2.0.1", default-features = false }
@@ -39,15 +38,9 @@ serde_json = "1.0.154"
 clap = { version = "4.6.7", features = ["derive"] }
 anyhow = "1.0.104"
 
-# Mobile bindings
-jni = "0.22.4"
-# Exact pin: the Dart package `flutter_rust_bridge` and flutter_rust_bridge_codegen must be
+# Flutter bindings. Exact pin: the Dart package `flutter_rust_bridge` and flutter_rust_bridge_codegen must be
 # the same version (2.13.0), or the generated code refuses to load.
 flutter_rust_bridge = "=2.13.0"
-
-# Browser bindings. Exact pin: the `wasm-bindgen` CLI that post-processes the .wasm must be
-# the same version (scripts/build-wasm.sh enforces it, reading this line).
-wasm-bindgen = "=0.2.128"
 
 # Testing
 proptest = "1.11.0"
@@ -90,17 +83,6 @@ undocumented_unsafe_blocks = "warn"
 [profile.release]
 lto = "thin"
 codegen-units = 1
-
-# The browser build (scripts/build-wasm.sh). Kept as its own profile so the native libraries
-# and the CLI keep the `release` settings above. Measured on the module (Node 22, profile S at
-# 656 px): opt-level "s" gave a 794 KB module and 23 ms per tick, 2 gave 675 KB and 13 ms, 3 gave
-# 692 KB and 13 ms, so 2 is both the smallest and as fast as 3.
-[profile.release-wasm]
-inherits = "release"
-opt-level = 2
-lto = true
-panic = "abort"
-strip = "debuginfo"
 
 [profile.dev.package."*"]
 # Dependencies (raptorq, tiny-skia) are painfully slow unoptimised; tests stay fast.
