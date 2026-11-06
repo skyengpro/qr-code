@@ -64,6 +64,18 @@ export 'src/motion.dart'
         trailLength;
 export 'src/painter.dart' show ParticleCodePainter, defaultMargin;
 export 'src/palette.dart' show ParticleCodePalette;
+export 'src/scanner/diagnostics.dart'
+    show
+        CameraBufferInfo,
+        DecodeTimings,
+        FrameDisposition,
+        NativeClock,
+        NativeTimestamp,
+        PacketInfo,
+        RejectStage,
+        ScanCameraStarted,
+        ScanDiagnostic,
+        ScanFrameDiagnostics;
 export 'src/scanner/errors.dart'
     show ParticleScannerError, ParticleScannerException;
 export 'src/scanner/events.dart'

@@ -7,6 +7,7 @@ import '../frame_spec.dart';
 import '../init.dart';
 import '../rust/api/dto.dart';
 import 'decoder.dart';
+import 'diagnostics.dart';
 import 'errors.dart';
 import 'events.dart';
 import 'mapping.dart';
@@ -66,6 +67,8 @@ class ParticleScanner {
   final bool _customDecoder;
   final DateTime Function() _clock;
   late final StreamController<ScanEvent> _controller;
+  final StreamController<ScanDiagnostic> _diagnostics =
+      StreamController<ScanDiagnostic>.broadcast();
 
   StreamSubscription<dynamic>? _framesSub;
   FrameDecoder? _decoder;
@@ -92,6 +95,12 @@ class ParticleScanner {
   /// [start] for that. Malformed camera events arrive as a [ScanError] with code
   /// `malformed_event`; events of unknown type are ignored.
   Stream<ScanEvent> get events => _controller.stream;
+
+  /// Broadcast stream of typed diagnostics for benchmarks: a [ScanCameraStarted] after
+  /// the first frame of each [start], then one [ScanFrameDiagnostics] per camera frame
+  /// event (decoded or released undecoded), never rate limited. See PROTOCOL.md,
+  /// "Diagnostics", for the clock domains. Listening costs nothing when unused.
+  Stream<ScanDiagnostic> get diagnostics => _diagnostics.stream;
 
   void _onListen() {
     // The transfer can finish while nobody listens; the payload must not get lost.
@@ -185,6 +194,7 @@ class ParticleScanner {
     _framesSub = null;
     unawaited(sub?.cancel());
     unawaited(_controller.close());
+    unawaited(_diagnostics.close());
     Future<void> shutdown() async {
       // Fire and forget; the platform may already be gone.
       try {
