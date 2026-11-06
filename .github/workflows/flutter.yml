@@ -3,9 +3,11 @@ name: Flutter
 # The particle_code Flutter plugin (flutter/particle_code) and its example app.
 #
 #   dart     analyze + test the plugin and the example against the host Rust library
+#   codegen  the committed flutter_rust_bridge bindings equal what the generator produces
 #   android  build the JNI library, then the example APK; the APK must carry it
 #   ios      build the xcframework, then the example app for a device (no codesign), debug and
-#            release; the Runner binary must export the dart:ffi symbols
+#            release; the Runner binary must export the dart:ffi symbols (pc_* and the
+#            flutter_rust_bridge entry points)
 #
 # Separate from ci.yml, android.yml and apple.yml: it needs Flutter and is slower.
 
@@ -69,6 +71,54 @@ jobs:
       - name: Example, flutter test
         working-directory: flutter/particle_code/example
         run: flutter test
+
+  # The Dart and Rust sides of the bridge are generated from crates/particlecode-ffi/src/api.
+  # Regenerating must reproduce the committed files exactly, so a change to the API without a
+  # regeneration (or a hand edit of generated code) fails here instead of at run time.
+  codegen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      FRB_VERSION: "2.13.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.97.0
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache flutter_rust_bridge_codegen
+        id: frb-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/flutter_rust_bridge_codegen
+          key: frb-codegen-${{ env.FRB_VERSION }}-${{ runner.os }}
+
+      - name: Install flutter_rust_bridge_codegen
+        if: steps.frb-cache.outputs.cache-hit != 'true'
+        run: cargo install flutter_rust_bridge_codegen --version "$FRB_VERSION" --locked
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Regenerate the bindings
+        working-directory: flutter/particle_code
+        run: |
+          flutter pub get
+          flutter_rust_bridge_codegen generate
+
+      - name: Generated code is up to date
+        run: |
+          set -euo pipefail
+          git status --porcelain
+          if [ -n "$(git status --porcelain -- crates/particlecode-ffi flutter/particle_code/lib)" ]; then
+            git --no-pager diff --stat
+            echo "Generated bindings are stale: run flutter_rust_bridge_codegen generate in flutter/particle_code and commit." >&2
+            exit 1
+          fi
 
   android:
     runs-on: ubuntu-latest
