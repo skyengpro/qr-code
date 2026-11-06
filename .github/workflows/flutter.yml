@@ -2,14 +2,18 @@ name: Flutter
 
 # The particle_code Flutter plugin (flutter/particle_code) and its example app.
 #
-#   dart     analyze + test the plugin and the example against the host Rust library
+#   dart     analyze + test the plugin and the example (the Native Assets hook builds the
+#            Rust library for the host)
 #   codegen  the committed flutter_rust_bridge bindings equal what the generator produces
-#   android  build the JNI library, then the example APK; the APK must carry it
-#   ios      build the xcframework, then the example app for a device (no codesign), debug and
-#            release; the Runner binary must export the dart:ffi symbols (pc_* and the
-#            flutter_rust_bridge entry points)
+#   android  build the example APK; it must carry the Rust library (built by the hook) and the
+#            plugin's JNI address helper for every ABI
+#   ios      build the example app for a device (no codesign) through SwiftPM and through
+#            CocoaPods; it must embed the Rust library as particlecode_ffi.framework
 #
-# Separate from ci.yml, android.yml and apple.yml: it needs Flutter and is slower.
+# The hook runs `rustup`, which installs the toolchain and targets pinned in
+# crates/particlecode-ffi/rust-toolchain.toml; the runners ship rustup.
+#
+# Separate from ci.yml: it needs Flutter and is slower.
 
 on:
   push:
@@ -27,26 +31,15 @@ env:
 jobs:
   dart:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      # The plugin finds target/debug by itself; naming it makes a wrong build obvious.
-      PARTICLECODE_LIB: ${{ github.workspace }}/target/debug/libparticlecode_ffi.so
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@1.97.0
-
-      - uses: Swatinem/rust-cache@v2
 
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
-
-      # The host library the encoder tests load through dart:ffi.
-      - name: Build the host library
-        run: cargo build -p particlecode-ffi
 
       - name: Plugin, flutter pub get
         working-directory: flutter/particle_code
@@ -126,21 +119,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@1.97.0
-        with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-ndk
-        run: cargo install --locked cargo-ndk
-
-      # ubuntu-latest ships the Android SDK and NDK (ANDROID_NDK_LATEST_HOME, ANDROID_HOME);
-      # the script finds them. It writes android/particlecode/src/main/jniLibs, which the
-      # plugin's Gradle build packages.
-      - name: Build libparticlecode_jni.so for arm64-v8a, armeabi-v7a, x86_64
-        run: scripts/build-android.sh
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -156,11 +134,13 @@ jobs:
         working-directory: flutter/particle_code/example
         run: flutter pub get
 
+      # ubuntu-latest ships the Android SDK and NDK; the hook links the Rust library with the
+      # NDK that Flutter hands it.
       - name: flutter build apk --debug
         working-directory: flutter/particle_code/example
         run: flutter build apk --debug
 
-      - name: The APK carries the native library for every ABI
+      - name: The APK carries both native libraries for every ABI
         working-directory: flutter/particle_code/example
         run: |
           set -euo pipefail
@@ -168,9 +148,11 @@ jobs:
           test -f "$apk"
           listing=$(unzip -l "$apk")
           for abi in arm64-v8a armeabi-v7a x86_64; do
-            grep -q "lib/$abi/libparticlecode_jni.so" <<< "$listing" \
-              || { echo "lib/$abi/libparticlecode_jni.so is missing from $apk"; exit 1; }
-            echo "found lib/$abi/libparticlecode_jni.so"
+            for lib in libparticlecode_ffi.so libparticle_code_jni.so; do
+              grep -q "lib/$abi/$lib" <<< "$listing" \
+                || { echo "lib/$abi/$lib is missing from $apk"; exit 1; }
+              echo "found lib/$abi/$lib"
+            done
           done
 
       # The CAMERA permission comes from the plugin's manifest, not the app's, so this
@@ -205,51 +187,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@1.97.0
-        with:
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
-
-      # rust-toolchain.toml pins 1.97.0 (minimal profile) for this directory. Make sure the
-      # toolchain that cargo resolves here, not only the one installed above, has the targets.
-      - name: Rust targets for the pinned toolchain
-        run: |
-          rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
-          rustup show
-
-      - uses: Swatinem/rust-cache@v2
-
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
-      # Every pc_* function of the header must be referenced by the plugin's SymbolKeeper.
-      - name: SymbolKeeper covers the C header
-        run: flutter/particle_code/ios/tool/check-symbols.sh
-
-      # Every ParticleCodeKit source must be linked into the plugin's Sources/particle_code/ParticleCodeKit.
-      - name: ParticleCodeKit sources are linked into the plugin pod
-        run: flutter/particle_code/ios/tool/check-kit-links.sh
-
-      # Leaves ParticleCodeFFI.xcframework in flutter/particle_code/ios/particle_code/Frameworks, which the
-      # plugin's podspec vendors.
-      - name: Build ParticleCodeFFI.xcframework for the plugin
-        run: scripts/build-xcframework.sh --flutter --no-zip
-
       - name: flutter pub get
         working-directory: flutter/particle_code/example
         run: flutter pub get
 
-      # Device builds without signing: they link the app for arm64, which is where the
-      # SymbolKeeper arrangement has to hold. First through Swift Package Manager (the
-      # plugin's ios/particle_code/Package.swift), then through CocoaPods (the podspec).
-      - name: "SwiftPM: flutter build ios --debug --no-codesign"
+      # Device builds without signing. First through Swift Package Manager (the plugin's
+      # ios/particle_code/Package.swift), then through CocoaPods (the podspec). Release builds
+      # strip and dead-strip, which must leave the bundled Rust framework alone.
+      - name: "SwiftPM: flutter build ios --release --no-codesign"
         working-directory: flutter/particle_code/example
         run: |
           set -euo pipefail
           flutter config --enable-swift-package-manager
-          flutter build ios --debug --no-codesign 2>&1 | tee build-spm.log
+          flutter build ios --release --no-codesign 2>&1 | tee build-spm.log
           # Flutter falls back to CocoaPods for plugins without a Package.swift and says so.
           if grep -q "do not support Swift Package Manager" build-spm.log; then
             echo "particle_code was not built through Swift Package Manager"; exit 1
@@ -257,19 +213,9 @@ jobs:
           grep -q "FlutterGeneratedPluginSwiftPackage" ios/Runner.xcodeproj/project.pbxproj \
             || { echo "Runner has no SwiftPM plugin integration"; exit 1; }
 
-      - name: "SwiftPM: the debug app exports the dart:ffi symbols"
+      - name: "SwiftPM: the app embeds the Rust library and it exports the bridge"
         working-directory: flutter/particle_code/example
-        run: tool/check_ios_symbols.sh build/ios/iphoneos/Runner.app
-
-      # Release turns on dead-stripping and symbol stripping, which is what would remove
-      # functions that only Dart calls.
-      - name: "SwiftPM: flutter build ios --release --no-codesign"
-        working-directory: flutter/particle_code/example
-        run: flutter build ios --release --no-codesign
-
-      - name: "SwiftPM: the release app exports the dart:ffi symbols"
-        working-directory: flutter/particle_code/example
-        run: tool/check_ios_symbols.sh build/ios/iphoneos/Runner.app
+        run: ../tool/check_ios_app.sh build/ios/iphoneos/Runner.app
 
       # The podspec must keep working for apps that have not moved to SwiftPM. The example's
       # project carries SwiftPM integration (Flutter 3.47 creates projects with it), so this
@@ -289,4 +235,4 @@ jobs:
           if grep -q "FlutterGeneratedPluginSwiftPackage" ios/Runner.xcodeproj/project.pbxproj; then
             echo "unexpected SwiftPM integration in the CocoaPods app"; exit 1
           fi
-          "$GITHUB_WORKSPACE/flutter/particle_code/example/tool/check_ios_symbols.sh" build/ios/iphoneos/Runner.app
+          "$GITHUB_WORKSPACE/flutter/particle_code/tool/check_ios_app.sh" build/ios/iphoneos/Runner.app

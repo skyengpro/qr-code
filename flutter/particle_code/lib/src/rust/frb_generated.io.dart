@@ -65,6 +65,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int dco_decode_CastedPrimitive_u_64(dynamic raw);
 
   @protected
+  int dco_decode_CastedPrimitive_usize(dynamic raw);
+
+  @protected
   ParticleDecoder
   dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerParticleDecoder(
     dynamic raw,
@@ -86,6 +89,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  CameraFrameDto dco_decode_box_autoadd_camera_frame_dto(dynamic raw);
+
+  @protected
   EncoderConfig dco_decode_box_autoadd_encoder_config(dynamic raw);
 
   @protected
@@ -102,6 +108,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int dco_decode_box_autoadd_u_8(dynamic raw);
+
+  @protected
+  CameraFrameDto dco_decode_camera_frame_dto(dynamic raw);
 
   @protected
   DisplayInfoDto dco_decode_display_info_dto(dynamic raw);
@@ -129,6 +138,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   FrameResultDto dco_decode_frame_result_dto(dynamic raw);
+
+  @protected
+  HintDto dco_decode_hint_dto(dynamic raw);
 
   @protected
   int dco_decode_i_32(dynamic raw);
@@ -278,6 +290,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int sse_decode_CastedPrimitive_u_64(SseDeserializer deserializer);
 
   @protected
+  int sse_decode_CastedPrimitive_usize(SseDeserializer deserializer);
+
+  @protected
   ParticleDecoder
   sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerParticleDecoder(
     SseDeserializer deserializer,
@@ -297,6 +312,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  CameraFrameDto sse_decode_box_autoadd_camera_frame_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   EncoderConfig sse_decode_box_autoadd_encoder_config(
@@ -319,6 +339,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int sse_decode_box_autoadd_u_8(SseDeserializer deserializer);
+
+  @protected
+  CameraFrameDto sse_decode_camera_frame_dto(SseDeserializer deserializer);
 
   @protected
   DisplayInfoDto sse_decode_display_info_dto(SseDeserializer deserializer);
@@ -346,6 +369,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   FrameResultDto sse_decode_frame_result_dto(SseDeserializer deserializer);
+
+  @protected
+  HintDto sse_decode_hint_dto(SseDeserializer deserializer);
 
   @protected
   int sse_decode_i_32(SseDeserializer deserializer);
@@ -504,6 +530,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_CastedPrimitive_u_64(int self, SseSerializer serializer);
 
   @protected
+  void sse_encode_CastedPrimitive_usize(int self, SseSerializer serializer);
+
+  @protected
   void
   sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerParticleDecoder(
     ParticleDecoder self,
@@ -525,6 +554,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_camera_frame_dto(
+    CameraFrameDto self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_box_autoadd_encoder_config(
@@ -555,6 +590,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_box_autoadd_u_8(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_camera_frame_dto(
+    CameraFrameDto self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_display_info_dto(
@@ -588,6 +629,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     FrameResultDto self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_hint_dto(HintDto self, SseSerializer serializer);
 
   @protected
   void sse_encode_i_32(int self, SseSerializer serializer);

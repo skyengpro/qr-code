@@ -14,22 +14,17 @@ Sender and scanner demo for the [`particle_code`](../README.md) plugin (Android 
 
 ## Run it
 
-The plugin does not build the Rust libraries; do that once from the repository root.
-
 ```sh
-# Android (needs the NDK and cargo-ndk)
-scripts/build-android.sh --debug
-
-# iOS (needs a Mac with Xcode)
-scripts/build-xcframework.sh --flutter
-
 cd flutter/particle_code/example
 flutter run            # on a phone: the simulator and emulator have no camera
 ```
 
+The first build compiles the Rust library through the plugin's Native Assets hook, which needs
+`rustup` (and Xcode for iOS, the Android NDK for Android, as any Flutter build with native
+code); later builds reuse it.
+
 The iOS deployment target is 15.0, the lowest Flutter 3.47 accepts (it rewrites anything
-lower), and the plugin's minimum too. The Release configuration sets
-`STRIP_STYLE = non-global` so the Rust functions that only Dart calls survive stripping.
+lower), and the plugin's minimum too.
 
 On iOS the app builds through Swift Package Manager (Flutter's default) and has no Podfile: its
 Xcode project carries Flutter's SwiftPM integration. Apps still on CocoaPods use the plugin's
@@ -38,13 +33,12 @@ podspec instead; CI covers that path by building a fresh app created with SwiftP
 ## Tests
 
 ```sh
-cargo build -p particlecode-ffi   # host library for the encoder tests
-flutter test
+flutter test           # builds the Rust library for the host first
 ```
 
 `test/send_tab_test.dart` drives the Send tab with the real encoder through flutter_rust_bridge (the test calls `ParticleCode.init()`; so does `main()`).
 `test/scan_tab_test.dart` mocks the plugin's platform channels.
 
-`tool/screenshot_test.dart` renders the picture above (`flutter test tool/screenshot_test.dart`),
-and `tool/check_ios_symbols.sh` is the CI check that a built iOS app contains the symbols Dart
-looks up (the flutter_rust_bridge entry points) and the `pc_*` C ABI.
+`tool/screenshot_test.dart` renders the picture above (`flutter test tool/screenshot_test.dart`).
+CI checks a built iOS app with the plugin's `tool/check_ios_app.sh`: the app embeds
+`particlecode_ffi.framework` and it exports the flutter_rust_bridge entry points.

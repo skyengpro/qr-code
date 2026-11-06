@@ -6,8 +6,9 @@
 /// encoder talks to the Rust library through flutter_rust_bridge; painting is pure Dart
 /// ([ParticleCodePainter]).
 ///
-/// **Scanner.** A [ParticleScanner] controls the native camera pipeline and streams
-/// [ScanEvent]s; [ParticleScannerPreview] shows the camera.
+/// **Scanner.** A [ParticleScanner] controls the native camera (capture and preview only),
+/// runs the Rust decoder on its frames and streams [ScanEvent]s; [ParticleScannerPreview]
+/// shows the camera. It needs `await ParticleCode.init()` too.
 library;
 
 export 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'

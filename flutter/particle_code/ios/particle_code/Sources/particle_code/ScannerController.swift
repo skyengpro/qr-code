@@ -1,76 +1,64 @@
 import AVFoundation
+import CoreMedia
+import CoreVideo
 import Flutter
 import UIKit
 
-/// Owns the one `AVCaptureSession` and the `ParticleCaptureScanner`, and turns decoder
-/// results into the event maps of PROTOCOL.md.
+/// Owns the one `AVCaptureSession` and hands camera frames to Dart by address
+/// (PROTOCOL.md). It does no decoding.
 ///
 /// Threading:
 /// * `sessionQueue` (serial): everything that configures or starts/stops the session and the
 ///   camera device. `startRunning()` blocks, so it never runs on the main thread.
-/// * The decoder lives on `ParticleCaptureScanner.queue`; results come back on the main queue.
-/// * All other state is main-thread only (method channel calls and results arrive there).
-final class ScannerController {
+/// * `captureQueue` (serial): `captureOutput` runs here.
+/// * The main thread: method channel calls, `toPreview` (it reads the preview layer) and
+///   event delivery.
+/// * `frameLock` guards the one in-flight frame, which the capture queue sets and the main
+///   thread clears.
+final class ScannerController: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     /// The shared session. It exists from the start (empty, not running) so that preview
     /// views can bind to it whether they are created before or after `start`.
     let session = AVCaptureSession()
 
-    /// Delivers one event map to Dart. Set once by the plugin; called on the main thread.
-    var eventSink: (([String: Any]) -> Void)?
+    /// Delivers one event map to Dart; returns `false` when nobody listens. Set once by the
+    /// plugin; called on the main thread.
+    var eventSink: (([String: Any]) -> Bool)?
 
     // MARK: Session-queue state
 
     private let sessionQueue = DispatchQueue(label: "com.particlecode.flutter.session")
+    private let captureQueue = DispatchQueue(
+        label: "com.particlecode.flutter.capture", qos: .userInitiated)
     private var camera: AVCaptureDevice?
     private var configured = false
     private var torchOn = false
     private var errorObserver: NSObjectProtocol?
 
-    /// Created in `init` and never replaced, so any thread may read it. `nil` only if the
-    /// Rust decoder could not be created (missing library or ABI mismatch).
-    private var scanner: ParticleCaptureScanner?
+    // MARK: In-flight frame (guarded by `frameLock`)
+
+    /// A camera frame whose base address is locked until Dart releases it.
+    private struct HeldFrame {
+        let id: Int
+        let sampleBuffer: CMSampleBuffer
+        let pixelBuffer: CVPixelBuffer
+    }
+
+    private let frameLock = NSLock()
+    private var held: HeldFrame?
+    private var lastFrameId = 0
 
     // MARK: Main-thread state
 
     private var previews: [WeakPreview] = []
-    /// Mirrors the number of `reset()` calls handed to the scanner (see `ScanUpdate.generation`).
-    private var generation = 0
-    private var progress = Counts()
-    private var lastKey: ProgressKey?
-    private var lastFrameTime: CFTimeInterval = 0
-    private var doneSent = false
-
-    /// Frame events are throttled to this interval unless the progress changed.
-    private static let frameInterval: CFTimeInterval = 0.1
 
     private final class WeakPreview {
         weak var view: PreviewView?
         init(_ view: PreviewView) { self.view = view }
     }
 
-    private struct Counts {
-        var have = 0
-        var need = 0
-        var segmentsDone = 0
-        var segmentsTotal = 0
-    }
-
-    private struct ProgressKey: Equatable {
-        var status: String
-        var have: Int
-        var need: Int
-        var segmentsDone: Int
-        var segmentsTotal: Int
-    }
-
     private enum StartError: Error {
         case noCamera
         case camera(String)
-    }
-
-    init() {
-        scanner = ParticleCaptureScanner(
-            resultQueue: .main, onUpdate: { [weak self] update in self?.handle(update) })
     }
 
     // MARK: - Permission
@@ -103,6 +91,8 @@ final class ScannerController {
     }
 
     private func startSession(torch: Bool, result: @escaping FlutterResult) {
+        // A frame still held belongs to a previous session whose Dart side is gone.
+        releaseHeldFrame()
         sessionQueue.async { [weak self] in
             guard let self = self else {
                 DispatchQueue.main.async { result(nil) }
@@ -147,26 +137,24 @@ final class ScannerController {
         }
     }
 
-    /// Session queue. Builds input, output and scanner once; later starts reuse them.
+    /// Session queue. Builds input and output once; later starts reuse them.
     private func configureIfNeeded() throws {
         if configured { return }
-        guard let device = ParticleCaptureScanner.defaultCamera() else {
+        guard let device = Self.defaultCamera() else {
             throw StartError.noCamera
         }
-        guard let scanner = scanner else {
-            throw StartError.camera("The particle decoder could not be created")
-        }
 
-        let output = ParticleCaptureScanner.makeOutput()
+        let output = Self.makeOutput()
         do {
             // 1080p, near autofocus, 30 fps. The data output connection is left in the
-            // sensor's native orientation on purpose: anchors are mapped to the preview
-            // through the capture device's coordinate space (see `normalizedAnchors`).
-            try ParticleCaptureScanner.configure(session: session, device: device, output: output)
+            // sensor's native orientation on purpose: `toPreview` maps buffer pixels to the
+            // preview through the capture device's coordinate space.
+            try Self.configure(session: session, device: device, output: output)
         } catch {
             throw StartError.camera("Camera setup failed: \(error.localizedDescription)")
         }
-        scanner.attach(to: output)  // the output holds its delegate weakly; `self.scanner` retains it
+        // The output holds its delegate weakly; this controller lives as long as the plugin.
+        output.setSampleBufferDelegate(self, queue: captureQueue)
 
         self.camera = device
         configured = true
@@ -175,7 +163,7 @@ final class ScannerController {
             forName: .AVCaptureSessionRuntimeError, object: session, queue: .main
         ) { [weak self] note in
             let error = note.userInfo?[AVCaptureSessionErrorKey] as? NSError
-            self?.eventSink?([
+            _ = self?.eventSink?([
                 "type": "error",
                 "code": "camera_error",
                 "message": error?.localizedDescription ?? "Camera runtime error",
@@ -183,6 +171,7 @@ final class ScannerController {
         }
     }
 
+    /// Stops capture. An unreleased frame stays held until `releaseFrame` or the next `start`.
     func stop(_ result: @escaping FlutterResult) {
         sessionQueue.async { [weak self] in
             self?.stopOnSessionQueue()
@@ -202,7 +191,7 @@ final class ScannerController {
         }
     }
 
-    /// Engine detach: stop the camera and drop the observer. No reply needed.
+    /// Engine detach: stop the camera, drop the observer and any held frame. No reply needed.
     func shutdown() {
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
@@ -212,17 +201,11 @@ final class ScannerController {
                 self.errorObserver = nil
             }
         }
+        // The engine, and with it Dart, is gone: nobody will call `releaseFrame`.
+        releaseHeldFrame()
     }
 
-    // MARK: - reset / torch
-
-    func reset() {
-        generation += 1  // pairs with the increment in `ParticleCaptureScanner.reset()`
-        progress = Counts()
-        lastKey = nil
-        doneSent = false
-        scanner?.reset()  // hops to the scanner's own queue
-    }
+    // MARK: - torch
 
     func setTorch(on: Bool, result: @escaping FlutterResult) {
         sessionQueue.async { [weak self] in
@@ -231,7 +214,7 @@ final class ScannerController {
                 return
             }
             self.torchOn = on
-            let device = self.camera ?? ParticleCaptureScanner.defaultCamera()
+            let device = self.camera ?? Self.defaultCamera()
             let hasTorch = device?.hasTorch ?? false
             self.applyTorch(to: device)
             DispatchQueue.main.async { result(hasTorch) }
@@ -257,9 +240,104 @@ final class ScannerController {
             code: "permission_denied", message: "Camera permission was denied", details: nil)
     }
 
+    // MARK: - Frames
+
+    /// Capture queue. Keeps the newest frame locked and announces it, unless one is in flight.
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        frameLock.lock()
+        if held != nil {
+            frameLock.unlock()
+            return
+        }
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer),
+            CVPixelBufferGetPlaneCount(pixelBuffer) >= 2,
+            CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly) == kCVReturnSuccess
+        else {
+            frameLock.unlock()
+            return
+        }
+        guard let yBase = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0),
+            let uvBase = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 1)
+        else {
+            CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
+            frameLock.unlock()
+            return
+        }
+        lastFrameId += 1
+        let id = lastFrameId
+        held = HeldFrame(id: id, sampleBuffer: sampleBuffer, pixelBuffer: pixelBuffer)
+        frameLock.unlock()
+
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        let yStride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
+        let uvStride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1)
+        let yLen = yStride * CVPixelBufferGetHeightOfPlane(pixelBuffer, 0)
+        // NV12: plane 1 is interleaved CbCr. U starts at its base, V one byte later.
+        let uLen = uvStride * CVPixelBufferGetHeightOfPlane(pixelBuffer, 1)
+        let uAddress = Int(bitPattern: uvBase)
+
+        let event: [String: Any] = [
+            "type": "frame",
+            "id": id,
+            "width": width,
+            "height": height,
+            "yAddress": Int(bitPattern: yBase),
+            "yLen": yLen,
+            "uAddress": uAddress,
+            "uLen": uLen,
+            "vAddress": uAddress + 1,
+            "vLen": uLen - 1,
+            "yStride": yStride,
+            "uvStride": uvStride,
+            "uvPixelStride": 2,
+        ]
+        DispatchQueue.main.async { [weak self] in
+            self?.deliver(event, id: id, width: width, height: height)
+        }
+    }
+
+    /// Main thread. Adds `toPreview` and sends the event; frees the frame when it cannot be sent.
+    private func deliver(_ base: [String: Any], id: Int, width: Int, height: Int) {
+        // `start` or `shutdown` may have released it while the hop to the main thread was pending.
+        frameLock.lock()
+        let stillHeld = held?.id == id
+        frameLock.unlock()
+        guard stillHeld else { return }
+
+        var event = base
+        event["toPreview"] = toPreview(width: width, height: height)
+        if eventSink?(event) != true {
+            // Nobody listens: Dart will never release this frame.
+            releaseFrame(id: id)
+        }
+    }
+
+    /// Unlocks and drops the frame `id`; unknown ids are ignored. Any thread.
+    func releaseFrame(id: Int) {
+        frameLock.lock()
+        defer { frameLock.unlock() }
+        guard let frame = held, frame.id == id else { return }
+        CVPixelBufferUnlockBaseAddress(frame.pixelBuffer, .readOnly)
+        held = nil
+    }
+
+    /// Unlocks and drops whatever frame is held. Any thread.
+    private func releaseHeldFrame() {
+        frameLock.lock()
+        defer { frameLock.unlock() }
+        guard let frame = held else { return }
+        CVPixelBufferUnlockBaseAddress(frame.pixelBuffer, .readOnly)
+        held = nil
+    }
+
     // MARK: - Previews
 
-    /// Main thread. Called by `PreviewView` so anchors can be mapped to what it displays.
+    /// Main thread. Called by `PreviewView` so frames can be mapped to what it displays.
     func register(preview: PreviewView) {
         previews.removeAll { $0.view == nil }
         previews.append(WeakPreview(preview))
@@ -275,150 +353,112 @@ final class ScannerController {
         return nil
     }
 
-    // MARK: - Results (main thread)
+    // MARK: - toPreview
 
-    private func handle(_ update: ScanUpdate) {
-        // In flight from before a reset: stale.
-        guard update.generation == generation else { return }
-        let result = update.result
-
-        if let bytes = update.newBytes, !bytes.isEmpty {
-            eventSink?(["type": "segment", "bytes": FlutterStandardTypedData(bytes: bytes)])
-        }
-
-        let status: String
-        var rejectReason: Any = NSNull()
-        switch result.progress {
-        case .rejected(let reason):
-            status = "rejected"
-            rejectReason = reason
-            if reason.contains("failed its CRC-32") || reason == "payload CRC-32 mismatch" {
-                NSLog("Particle Code scan reset: %@ (progress %ld/%ld)", reason, progress.have, progress.need)
-            }
-        case .accepted(let have, let need, let segmentsDone, let segmentsTotal):
-            status = "accepted"
-            progress = Counts(
-                have: have, need: need, segmentsDone: segmentsDone, segmentsTotal: segmentsTotal)
-        case .done:
-            status = "done"
-            progress.have = progress.need
-            progress.segmentsDone = progress.segmentsTotal
-        }
-
-        let key = ProgressKey(
-            status: status, have: progress.have, need: progress.need,
-            segmentsDone: progress.segmentsDone, segmentsTotal: progress.segmentsTotal)
-        let now = CACurrentMediaTime()
-        if key != lastKey || now - lastFrameTime >= Self.frameInterval {
-            lastKey = key
-            lastFrameTime = now
-            eventSink?(
-                frameEvent(
-                    update, status: status, rejectReason: rejectReason))
-        }
-
-        if case .done(let payload) = result.progress, !doneSent {
-            doneSent = true
-            eventSink?([
-                "type": "done",
-                "payload": FlutterStandardTypedData(bytes: payload),
-                "sessionId": Int(update.sessionId ?? 0),
-            ])
-        }
-
-        if result.error == .internalPanic {
-            // The decoder asked to be discarded; start over with a fresh one.
-            NSLog("Particle Code scan reset: decoder encountered an internal error (progress %ld/%ld)", progress.have, progress.need)
-            reset()
-        }
-    }
-
-    private func frameEvent(_ update: ScanUpdate, status: String, rejectReason: Any) -> [String: Any] {
-        let result = update.result
-        var liveness: Any = NSNull()
-        if case .read(let seedLow, let rolling, let consistent) = result.liveness {
-            liveness = [
-                "consistent": consistent,
-                "seedLow": Int(seedLow),
-                "rolling": Int(rolling),
-            ] as [String: Any]
-        }
-        return [
-            "type": "frame",
-            "status": status,
-            "locked": result.locked,
-            "profile": result.profile?.rawValue ?? -1,
-            "shapeId": result.shapeId ?? -1,
-            "have": progress.have,
-            "need": progress.need,
-            "segmentsDone": progress.segmentsDone,
-            "segmentsTotal": progress.segmentsTotal,
-            "liveness": liveness,
-            "anchors": normalizedAnchors(
-                result.anchors, imageWidth: update.imageWidth, imageHeight: update.imageHeight),
-            "sharpness": result.sharpness,
-            "hint": Self.orNull(result.hint),
-            "hintCode": Self.hintCode(result.hint),
-            "rejectReason": rejectReason,
-        ]
-    }
-
-    // MARK: - Anchors
-
-    /// Anchors in image pixels -> `[x0, y0, x1, y1, ...]` normalized 0..1 to the preview
-    /// layer's displayed content.
+    /// Main thread. The affine `[a, b, c, d, e, f]` with `x' = a*x + b*y + c`,
+    /// `y' = d*x + e*y + f` mapping buffer pixels to the preview, normalized 0..1.
     ///
     /// The data output's connection is never rotated or mirrored, so the pixel buffer is in
     /// the capture device's native space. `layerPointConverted(fromCaptureDevicePoint:)` takes
     /// a point in exactly that space, normalized to 0..1 (top left origin), and applies the
-    /// preview connection's rotation and mirroring plus `resizeAspectFill` cropping. Dividing
-    /// by the layer's bounds gives 0..1 in the displayed view. Points outside 0..1 are
-    /// possible (the code is partly cropped out of the preview) and are sent as they are.
-    ///
-    /// Without a preview on screen there is nothing to be relative to, so no anchors are sent.
-    private func normalizedAnchors(
-        _ anchors: [ScanPoint], imageWidth: Int, imageHeight: Int
-    ) -> [Double] {
-        guard !anchors.isEmpty, imageWidth > 0, imageHeight > 0,
-            let preview = activePreview()
-        else { return [] }
-        let layer = preview.previewLayer
-        guard layer.connection != nil else { return [] }
-        let size = layer.bounds.size
-        guard size.width > 0, size.height > 0 else { return [] }
-
-        var out: [Double] = []
-        out.reserveCapacity(anchors.count * 2)
-        for point in anchors {
-            let device = CGPoint(
-                x: point.x / Double(imageWidth), y: point.y / Double(imageHeight))
-            let p = layer.layerPointConverted(fromCaptureDevicePoint: device)
-            let x = Double(p.x / size.width)
-            let y = Double(p.y / size.height)
-            guard x.isFinite, y.isFinite else { return [] }
-            out.append(x)
-            out.append(y)
+    /// preview connection's rotation and mirroring plus the `resizeAspectFill` crop. Dividing
+    /// by the layer's bounds gives 0..1 in the displayed view. That conversion is affine, so
+    /// three corner points (0,0), (w,0), (0,h) determine it. Points outside 0..1 are possible
+    /// (cropped out of the preview) and are sent as they are.
+    private func toPreview(width: Int, height: Int) -> [Double] {
+        let w = Double(width)
+        let h = Double(height)
+        if w > 0, h > 0, let preview = activePreview() {
+            let layer = preview.previewLayer
+            let size = layer.bounds.size
+            if layer.connection != nil, size.width > 0, size.height > 0 {
+                func normalized(_ x: Double, _ y: Double) -> (x: Double, y: Double) {
+                    let p = layer.layerPointConverted(
+                        fromCaptureDevicePoint: CGPoint(x: x / w, y: y / h))
+                    return (Double(p.x / size.width), Double(p.y / size.height))
+                }
+                let p0 = normalized(0, 0)
+                let p1 = normalized(w, 0)
+                let p2 = normalized(0, h)
+                let affine = [
+                    (p1.x - p0.x) / w, (p2.x - p0.x) / h, p0.x,
+                    (p1.y - p0.y) / w, (p2.y - p0.y) / h, p0.y,
+                ]
+                if affine.allSatisfy({ $0.isFinite }) { return affine }
+            }
         }
-        return out
+        return Self.uprightAffine(width: w, height: h)
     }
 
-    private static func orNull(_ value: String?) -> Any {
-        if let value = value { return value }
-        return NSNull()
+    /// Without a laid-out preview: the upright image itself. The sensor's native orientation
+    /// is landscape (right), so the portrait picture is the buffer rotated 90 degrees
+    /// clockwise: (x, y) -> (h - y, x), divided by the upright size (h, w).
+    private static func uprightAffine(width w: Double, height h: Double) -> [Double] {
+        guard w > 0, h > 0 else { return [1, 0, 0, 0, 1, 0] }
+        return [0, -1 / h, 1, 1 / w, 0, 0]
     }
 
-    // MARK: - Hints
+    // MARK: - Capture configuration
 
-    /// 0 none, 1 point at code, 2 move back, 3 hold steady, 4 lighting, 5 update app, 6 other.
-    /// Keyword matching like `particlecode-jni`'s `hint_code`, so rewording the English text
-    /// does not silently break the mapping.
-    static func hintCode(_ hint: String?) -> Int {
-        guard let text = hint?.lowercased() else { return 0 }
-        if text.contains("newer version") || text.contains("update") { return 5 }
-        if text.contains("too dark") || text.contains("glare") { return 4 }
-        if text.contains("move back") || text.contains("whole code") { return 2 }
-        if text.contains("steady") { return 3 }
-        if text.contains("point the camera") { return 1 }
-        return 6
+    /// NV12 full range (`kCVPixelFormatType_420YpCbCr8BiPlanarFullRange`): luma in 0...255 and
+    /// planes Rust reads in place. The ISP produces it natively. Late frames are discarded, so
+    /// AVFoundation never queues behind a slow consumer.
+    private static func makeOutput() -> AVCaptureVideoDataOutput {
+        let output = AVCaptureVideoDataOutput()
+        output.alwaysDiscardsLateVideoFrames = true
+        output.videoSettings = [
+            kCVPixelBufferPixelFormatTypeKey as String:
+                Int(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
+        ]
+        return output
+    }
+
+    /// The back wide-angle camera: the one to point at a phone screen.
+    private static func defaultCamera() -> AVCaptureDevice? {
+        AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
+    }
+
+    /// Adds `device` and `output` to `session` and tunes the camera for reading a screen:
+    /// 1080p when available, continuous near autofocus, continuous auto exposure and the
+    /// frame duration pinned to 30 fps (so dim rooms raise ISO instead of blurring frames).
+    private static func configure(
+        session: AVCaptureSession,
+        device: AVCaptureDevice,
+        output: AVCaptureVideoDataOutput,
+        targetFPS: Int = 30
+    ) throws {
+        let input = try AVCaptureDeviceInput(device: device)
+        guard session.canAddInput(input), session.canAddOutput(output) else {
+            throw StartError.camera("The capture session refused the camera input or output")
+        }
+        session.beginConfiguration()
+        if session.canSetSessionPreset(.hd1920x1080) {
+            session.sessionPreset = .hd1920x1080
+        }
+        session.addInput(input)
+        session.addOutput(output)
+        session.commitConfiguration()
+
+        // After the commit: the preset chooses the active format the frame rate must fit.
+        try device.lockForConfiguration()
+        defer { device.unlockForConfiguration() }
+        if device.isFocusModeSupported(.continuousAutoFocus) {
+            device.focusMode = .continuousAutoFocus
+        }
+        if device.isAutoFocusRangeRestrictionSupported {
+            device.autoFocusRangeRestriction = .near
+        }
+        if device.isExposureModeSupported(.continuousAutoExposure) {
+            device.exposureMode = .continuousAutoExposure
+        }
+        let fps = Double(targetFPS)
+        let supported = device.activeFormat.videoSupportedFrameRateRanges.contains {
+            $0.minFrameRate <= fps && fps <= $0.maxFrameRate
+        }
+        if supported, targetFPS > 0 {
+            let duration = CMTime(value: 1, timescale: CMTimeScale(targetFPS))
+            device.activeVideoMinFrameDuration = duration
+            device.activeVideoMaxFrameDuration = duration
+        }
     }
 }

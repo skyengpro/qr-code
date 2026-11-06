@@ -1,6 +1,6 @@
 [package]
 name = "particlecode-ffi"
-description = "Particle Code FFI surface for the Flutter (flutter_rust_bridge) and Tauri apps, plus a C ABI."
+description = "Particle Code bindings for the Flutter plugin (flutter_rust_bridge)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,6 +10,9 @@ repository.workspace = true
 authors.workspace = true
 
 [lib]
+# `cdylib` is the library the Flutter plugin bundles (Native Assets, see
+# flutter/particle_code/hook/build.dart), whose builder also insists on `staticlib`;
+# `lib` serves this crate's own tests.
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [dependencies]

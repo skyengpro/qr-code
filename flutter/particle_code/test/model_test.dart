@@ -103,45 +103,15 @@ void main() {
   });
 
   group('library lookup', () {
-    test('PARTICLECODE_LIB wins', () {
-      expect(
-        findHostLibrary(environment: {libraryEnvVar: '/some/where/lib.so'}),
-        '/some/where/lib.so',
-      );
-    });
-
-    test('searches upwards for the workspace target dir', () {
+    test('flutter test reads the hook output from build/native_assets', () {
       final tmp = Directory.systemTemp.createTempSync('pc_lib_');
       addTearDown(() => tmp.deleteSync(recursive: true));
-      final name = hostLibraryName(Platform.operatingSystem);
-      final dbg = Directory('${tmp.path}/target/debug')
-        ..createSync(recursive: true);
-      final rel = Directory('${tmp.path}/target/release')
-        ..createSync(recursive: true);
-      File('${dbg.path}/$name').writeAsBytesSync([0]);
-      final nested = Directory('${tmp.path}/a/b/c')
-        ..createSync(recursive: true);
+      final file = nativeAssetsLibrary(root: tmp, os: 'linux');
       expect(
-        findHostLibrary(start: nested, environment: const {}),
-        '${dbg.path}/$name',
+        file.path,
+        '${tmp.path}/build/native_assets/linux/libparticlecode_ffi.so',
       );
-      // The newer of debug and release is preferred.
-      final relFile = File('${rel.path}/$name')..writeAsBytesSync([0]);
-      relFile.setLastModifiedSync(
-        DateTime.now().add(const Duration(minutes: 5)),
-      );
-      expect(
-        findHostLibrary(start: nested, environment: const {}),
-        '${rel.path}/$name',
-      );
-    });
-
-    test('nothing found is null', () {
-      final tmp = Directory.systemTemp.createTempSync('pc_none_');
-      addTearDown(() => tmp.deleteSync(recursive: true));
-      // The temp dir's ancestors may hold a target dir; only assert the shape.
-      final r = findHostLibrary(start: tmp, environment: const {});
-      expect(r == null || File(r).existsSync(), isTrue);
+      expect(openParticleLibrary(root: tmp), isNull);
     });
 
     test('library names per OS', () {

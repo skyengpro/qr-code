@@ -1,3 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- The library declares no permissions: the host app asks for CAMERA itself. -->
-<manifest />

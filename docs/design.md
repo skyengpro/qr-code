@@ -147,58 +147,43 @@ The spec's pipeline, with these refinements (details in `particlecode-vision`'s 
 * **Confidence.** Each dot gets the weakest of its hue margin, size margin and ink depth,
   on a 0–255 scale. Symbols below `rs::ERASURE_BELOW` (96) become Reed-Solomon erasures.
 
-## Native bindings
+## Flutter bindings
 
-* `particlecode-ffi` is the one binary surface: the `flutter_rust_bridge` `api`, the C ABI
-  (`include/particlecode.h`), and `native` (borrowed-buffer entry points for Rust hosts).
-* Flutter sender: `flutter_rust_bridge` 2.13 generates `src/frb_generated.rs` and the Dart
-  bindings (`flutter/particle_code/lib/src/rust`) from `api`
-  (`flutter/particle_code/flutter_rust_bridge.yaml`); both are committed, and CI regenerates
-  and fails on a diff. Frames for the view come from `ParticleEncoder::frame_async`, which the
-  bridge runs on its Rust thread pool, as typed arrays (no JSON). frb's cargokit build
-  integration is not used: the same prebuilt libraries as before carry the bridge (Android's
-  `libparticlecode_jni.so` exports its symbols; on iOS `frb_keep.rs` holds the 19 symbols Dart
-  looks up in the static link, read by `pc_abi_version`, which the Swift `SymbolKeeper`
-  calls). The generator, the Dart package and the crate are pinned to the same version.
-* iOS/macOS: `scripts/build-xcframework.sh` packages the C ABI as
-  `ParticleCodeFFI.xcframework`; `apple/ParticleCodeKit` wraps it in Swift (NV12
-  `CVPixelBuffer`s read in place, an `AVCaptureVideoDataOutput` delegate).
-* Android: `particlecode-jni` exports JNI functions for `com.vaam.particlecode.NativeBridge`
-  over the same decoder. Direct `ByteBuffer`s from CameraX are read in place, handles are
-  table keys (not pointers), and results go into preallocated arrays. `android/` holds the
-  Kotlin wrapper and CameraX analyzer.
+* Flutter is the only host. `particlecode-ffi` exposes `api` to Dart through
+  `flutter_rust_bridge` 2.13, which generates `src/frb_generated.rs` and the Dart bindings
+  (`flutter/particle_code/lib/src/rust`) from `api`
+  (`flutter/particle_code/flutter_rust_bridge.yaml`). Both are committed; CI regenerates and
+  fails on a diff. The generator, the Dart package and the crate are pinned to the same version.
+  The standalone Android library, the Swift package, the JNI shim, the C ABI and the wasm
+  sender were removed: each duplicated the bridge for one platform.
+* **Build: Native Assets, not cargokit.** The plugin's `hook/build.dart`
+  (`flutter_rust_bridge_hooks` over `native_toolchain_rust`) runs `cargo build` for the target
+  Flutter is building and bundles the `cdylib` (`libparticlecode_ffi.so` in the APK,
+  `particlecode_ffi.framework` on iOS, `build/native_assets/<os>/` under `flutter test`). The
+  builder requires `crates/particlecode-ffi/rust-toolchain.toml` with an exact channel and the
+  allowed targets, and both `cdylib` and `staticlib` crate types. A dynamic library exports
+  the bridge symbols by itself, so the old iOS static-link symbol keeping is gone.
+* **Sender.** Frames come from `ParticleEncoder::frame_async` on frb's Rust thread pool, as
+  typed arrays (no JSON).
+* **Scanner: pointer handoff.** Native code (CameraX, AVFoundation) keeps the camera, the
+  preview and focus/torch, and sends Dart the plane addresses, lengths and strides of a frame
+  it keeps locked. Dart calls `ParticleDecoder::feed_camera_frame`, an async frb call: Rust
+  reads the planes in place on a worker thread (`slice::from_raw_parts` after checking for null
+  and empty planes; `feed_yuv_slices` then checks the lengths against dimensions and
+  strides). When the call completes, Dart tells native code to release the frame. One frame is
+  in flight at a time and native code drops frames meanwhile, so the decoder always sees the
+  newest one. Copying a 1080p frame into Dart and across the bridge would cost ~3 MB per frame;
+  the handoff costs two platform-channel messages. Android needs one C function
+  (`GetDirectBufferAddress`) for the address of a direct `ByteBuffer`, built by the plugin's
+  CMake; it is not Rust. The contract is `flutter/particle_code/PROTOCOL.md`.
+* Anchors come back in buffer pixels; each frame carries an affine `toPreview` computed by the
+  native side from the platform's own transforms (rotation, mirroring, aspect-fill crop), and
+  Dart applies it for the overlay.
 * `raptorq`'s `std` feature (runtime SIMD dispatch) does not compile for 32-bit ARM on
   stable. Core therefore requests it through a target-specific dependency on every target
   except `target_arch = "arm"` and `target_os = "none"`, rather than through core's own
   `std` feature. Consequence: a host-target `--no-default-features` build still compiles
   raptorq with `std`. The real `no_std` guarantee is the bare-metal `thumbv7em` CI build.
-
-## Browser sender (`particlecode-wasm`)
-
-* The operator console draws the code in a `<canvas>`, so the web needs the sender but not the
-  decoder. `particlecode-wasm` is `particlecode-core` + `particlecode-render` behind
-  `wasm-bindgen`; it adds no format, so there is no `FORMAT_VERSION` change. Geometry and
-  palette still come only from core and `render`.
-* **Rust owns the clocks.** `ParticleCanvas::tick(elapsed_ms, now_unix_ms, size_px)` ports
-  `ParticleCodeView._onTick`: data frame `floor(elapsed * fps / 1000)` (from time, never from
-  the number of paints), the previous frame kept for the 40 ms cross-fade
-  (`t_since_switch = t - index / fps`, no cross-fade without a previous frame), ripple and
-  reveal as `render_animated` already derives them, and the liveness second from the
-  wall-clock argument at the moment a frame is fetched. JavaScript supplies the timer and the
-  clock readings and blits; nothing in the crate calls `SystemTime::now()`, which panics on
-  `wasm32-unknown-unknown`. The session is `Session::with_identity` with a random id and key
-  (getrandom's `wasm_js` backend, enabled on that target only) and the caller's clock origin.
-* The painter returns a fresh `Pixmap` per call (tiny-skia owns it); `tick` copies it into one
-  persistent RGBA buffer so a page keeps a single `Uint8ClampedArray` view over wasm memory
-  (`pixels_ptr`/`pixels_len`; reading the address is safe Rust, only the view lives in JS).
-  The background is opaque, so premultiplied and straight alpha are the same bytes.
-  `motion = false` paints `render` (no drift, no cross-fade) and repaints only when the data
-  frame or the size changes; `tick` returns whether pixels changed.
-* Build: `scripts/build-wasm.sh` (`--profile release-wasm`, `opt-level = 2`; measured, `s` gave a
-  794 KB module and 23 ms per profile S tick at 656 px, 2 gave 675 KB and 13 ms) then `wasm-bindgen --target web`. `wasm-bindgen` is pinned exactly in the workspace
-  and the script refuses a CLI of another version. CI builds it and runs a Node smoke test
-  (`.github/workflows/wasm.yml`); the native tests render through `tick` and decode the pixels
-  with `ParticleDecoder::feed_rgba` (a 6-digit code and a 253-byte JSON payload, profile S).
 
 ## Not implemented in v1
 

@@ -22,9 +22,9 @@ abstract final class ParticleCode {
   /// ```
   ///
   /// Idempotent: further calls (also concurrent ones) return once the first one is done.
-  /// [library] overrides how the native library is opened; by default Android uses
-  /// `libparticlecode_jni.so`, iOS the process image, and desktop hosts and tests
-  /// `$PARTICLECODE_LIB` or `target/{debug,release}/libparticlecode_ffi.*`.
+  /// The library is the one the plugin's Native Assets hook compiled from
+  /// `crates/particlecode-ffi` and bundled into the app (under `flutter test`:
+  /// `build/native_assets/<os>/`). [library] overrides how it is opened.
   ///
   /// Throws [ParticleCodeException] if the library cannot be loaded or does not match
   /// this package version. A failed call can be retried.
@@ -51,8 +51,6 @@ abstract final class ParticleCode {
   static Future<void> _start(ExternalLibrary? library) async {
     try {
       await RustLib.init(externalLibrary: library ?? openParticleLibrary());
-    } on ParticleCodeException {
-      rethrow;
     } on StateError catch (e) {
       throw ParticleCodeException('cannot start particlecode: ${e.message}');
     } on ArgumentError catch (e) {

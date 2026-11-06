@@ -82,12 +82,8 @@ crates/particlecode-vision   camera image -> header + symbols + liveness (locate
 crates/particlecode-render   FrameSpec -> pixels (tiny-skia): PNG, animated GIF, SVG, PNG sequence + manifest; synthetic camera
 crates/particlecode-shapes   shape tool: SVG path -> lattice bitmaps, rule checks, synthetic validation, shapes.bin
 crates/particlecode-cli      the `particlecode` command
-crates/particlecode-ffi      flutter_rust_bridge API (the Flutter sender) and a C ABI for other hosts
-crates/particlecode-jni      Android JNI shim over the decoder (CameraX buffers read in place)
-crates/particlecode-wasm     browser sender: payload -> animated RGBA frames for a <canvas> (wasm-bindgen); scripts/build-wasm.sh
-android/                     Kotlin wrapper + CameraX analyzer (library module); scripts/build-android.sh
-apple/                       ParticleCodeKit Swift package + podspec over ParticleCodeFFI.xcframework; scripts/build-xcframework.sh
-flutter/particle_code/       Flutter plugin (sender over flutter_rust_bridge, scanner on the native pipelines) + example app
+crates/particlecode-ffi      the plugin's Rust side: flutter_rust_bridge API (encoder, decoder over camera frames)
+flutter/particle_code/       Flutter plugin for Android and iOS (Rust built by a Native Assets hook) + example app
 examples/                    runnable examples and sample CBOR payloads
 fuzz/                        cargo-fuzz target for the header decoder
 ```
@@ -135,17 +131,26 @@ if let Some(lock) = particlecode_vision::locate(&yuv.y) {
 
 ## Flutter
 
-[`flutter/particle_code`](flutter/particle_code) is a Flutter plugin for Android and iOS. The
-sender encodes through the Rust library over [flutter_rust_bridge](https://pub.dev/packages/flutter_rust_bridge)
-(frames are built on Rust threads) and paints the animated code in Dart; the scanner is the native camera pipeline (CameraX, AVFoundation) and only reports progress and the
-final payload to Dart.
+[`flutter/particle_code`](flutter/particle_code) is the Flutter plugin for Android and iOS, and the
+only way an app uses Particle Code. Dart reaches Rust through
+[flutter_rust_bridge](https://pub.dev/packages/flutter_rust_bridge), nothing else:
+
+* **Sender.** Frames are built by the Rust encoder on Rust threads and painted in Dart.
+* **Scanner.** The plugin's native code runs the camera (CameraX, AVFoundation: preview, focus,
+  torch) and hands each frame to Dart **by address**. Dart passes the addresses to the Rust
+  decoder, which reads the planes in place on a worker thread, then tells the native side to
+  release the frame. Pixels are never copied; only the newest frame is decoded.
+* **Build.** The plugin's [Native Assets](https://docs.flutter.dev/platform-integration/bind-native-code)
+  hook (`hook/build.dart`) compiles `crates/particlecode-ffi` with cargo for every target the
+  app is built for and bundles it. `flutter run` and `flutter build` just work once `rustup` is
+  installed; there is no prebuilt binary and no build script.
 
 <img src="docs/images/flutter_send.png" alt="The example app's Send tab showing a heart-shaped code" width="260">
 
 ```dart
 import 'package:particle_code/particle_code.dart';
 
-// Once, before using the sender (loads the Rust library).
+// Once, before using the sender or the scanner (loads the Rust library).
 await ParticleCode.init();
 
 // Sender: show a payload as an animated field of dots.
@@ -164,50 +169,11 @@ if (await scanner.requestPermission()) await scanner.start();
 // ... ParticleScannerPreview(scanner: scanner)
 ```
 
-Build the native libraries first (`scripts/build-android.sh`, `scripts/build-xcframework.sh
---flutter`); see the [plugin README](flutter/particle_code/README.md). The
+See the [plugin README](flutter/particle_code/README.md) and
+[`PROTOCOL.md`](flutter/particle_code/PROTOCOL.md) (the native/Dart frame handoff). The
 [example app](flutter/particle_code/example) has a Send tab (sample ticket and credential or free
 text, profile, shape, mood) and a Scan tab (camera, progress, result sheet), and
 `.github/workflows/flutter.yml` builds it for Android and iOS on every pull request.
-
-## Web
-
-[`crates/particlecode-wasm`](crates/particlecode-wasm) draws the animated code in a browser
-`<canvas>`, so a page can show a code that the Flutter scanner reads. It is the Flutter
-`ParticleCodeView` ported to Rust: the same frame schedule (data frame from elapsed time, 40 ms
-cross-fade, the liveness second from the wall clock) over `particlecode_render::render_animated`,
-so the pixels come from the one painter. Rust owns the clocks and the cross-fade; the page owns
-the timer and only blits.
-
-```sh
-rustup target add wasm32-unknown-unknown
-cargo install --locked wasm-bindgen-cli --version <the pin in Cargo.toml>   # exact match required
-scripts/build-wasm.sh out          # out/particlecode_wasm.js + out/particlecode_wasm_bg.wasm (~675 KB)
-node crates/particlecode-wasm/tests/smoke.mjs out
-```
-
-```js
-import { initSync, ParticleCanvas, wasm_memory } from "./out/particlecode_wasm.js";
-initSync({ module: wasmBytes }); // or: await init() to fetch particlecode_wasm_bg.wasm
-
-// payload bytes, profile "s" | "m" | "l", data frames per second, Unix seconds of frame 0, animated?
-const code = new ParticleCanvas(payload, "s", 10, Date.now() / 1000, true);
-const t0 = performance.now();
-function frame() {
-  const size = canvas.width; // square, in pixels
-  if (code.tick(performance.now() - t0, Date.now(), size)) {
-    const px = new Uint8ClampedArray(wasm_memory().buffer, code.pixels_ptr(), code.pixels_len());
-    ctx.putImageData(new ImageData(px, size, size), 0, 0); // zero-copy; re-read the pointer every time
-  }
-  requestAnimationFrame(frame);
-}
-frame();
-```
-
-`tick` returns `false` when nothing changed (a static code between data frames), so a page can skip the
-blit. A profile S frame at 656 px costs about 13 ms in Node, profile M about twice that; draw at no more
-than 30 fps and stop the loop while the tab is hidden. Pass `motion = false` for a static code (for
-`prefers-reduced-motion`). `code.free()` releases the session.
 
 ## Development
 

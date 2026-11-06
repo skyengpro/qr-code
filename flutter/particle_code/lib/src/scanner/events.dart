@@ -70,7 +70,10 @@ class ScanLiveness {
   final int rolling;
 }
 
-/// An event from the native scanner (`particle_code/scan_events`).
+/// An event of the [ParticleScanner] stream.
+///
+/// [fromMap] parses the plain-map form (kept for tests and tooling); the scanner itself
+/// builds the events from decoder results.
 sealed class ScanEvent {
   const ScanEvent();
 

@@ -3,14 +3,17 @@
 Particle Code for Flutter. A phone screen shows an animated circular field of colored
 dots that carries a COSE/CBOR payload; another phone's camera scans it.
 
-* **Sender**: encode a payload with the Rust library (through
-  [flutter_rust_bridge](https://cjycode.com/flutter_rust_bridge/)) and paint the animated
-  code in pure Dart (`ParticleCodeView`).
-* **Scanner**: a native camera pipeline (CameraX on Android, AVFoundation on iOS) decodes
-  with the same Rust library. Camera frames never reach Dart; only small progress events
-  and, at the end, the payload do.
+Everything Rust is reached through [flutter_rust_bridge](https://cjycode.com/flutter_rust_bridge/),
+and the plugin builds the Rust library itself (Native Assets): add the dependency, have
+[`rustup`](https://rustup.rs) installed, and `flutter run`.
 
-The wire contract between the Dart and native sides is in [`PROTOCOL.md`](PROTOCOL.md).
+* **Sender**: encode a payload with the Rust library and paint the animated code in pure
+  Dart (`ParticleCodeView`).
+* **Scanner**: the native camera (CameraX on Android, AVFoundation on iOS) hands each frame
+  to Dart by address; the Rust decoder reads it in place on a worker thread, and Dart turns
+  the results into scan events. Pixels are never copied.
+
+The contract between the Dart and native sides is in [`PROTOCOL.md`](PROTOCOL.md).
 
 ## Show a code
 
@@ -161,13 +164,12 @@ draws segments and symbols held on its own, wherever you want it. `ScanFrame.hin
 
 Only the scanner needs the camera permission; showing a code needs none.
 
-## Native libraries
+## The Rust library
 
-The sender's Rust API (`crates/particlecode-ffi/src/api`) is bound to Dart with
-flutter_rust_bridge 2.13; the generated Dart is committed in `lib/src/rust/` and must not be
-edited by hand. Regenerate it after changing the Rust API (the generator version must equal
-the `flutter_rust_bridge` package and crate version, see `flutter_rust_bridge.yaml`; CI
-fails on a diff):
+`crates/particlecode-ffi` is bound to Dart with flutter_rust_bridge 2.13; the generated Dart
+is committed in `lib/src/rust/` and must not be edited by hand. Regenerate it after changing
+the Rust API (the generator version must equal the `flutter_rust_bridge` package and crate
+version, see `flutter_rust_bridge.yaml`; CI fails on a diff):
 
 ```sh
 cd flutter/particle_code
@@ -175,33 +177,22 @@ cargo install flutter_rust_bridge_codegen --version 2.13.0 --locked
 flutter_rust_bridge_codegen generate
 ```
 
-The plugin does not use flutter_rust_bridge's cargokit build integration. Nothing is built
-when you `flutter build`; the Rust libraries are prebuilt by our scripts from the workspace
-root:
+[`hook/build.dart`](hook/build.dart) is a Native Assets build hook. Whenever Flutter builds an
+app that uses this plugin (`flutter run`, `flutter build`, `flutter test`), it runs
+`cargo build --release` for the target and bundles the library: `libparticlecode_ffi.so` per
+ABI in the APK, `particlecode_ffi.framework` in the iOS app, `build/native_assets/<os>/` for
+`flutter test`. You need `rustup`; the hook installs the toolchain and targets pinned in
+`crates/particlecode-ffi/rust-toolchain.toml` on first use (a few minutes once). iOS builds
+need Xcode, Android builds the NDK that Flutter already uses.
 
-```sh
-scripts/build-android.sh          # libparticlecode_jni.so per ABI into android/.../jniLibs
-scripts/build-xcframework.sh --flutter   # ParticleCodeFFI.xcframework into ios/particle_code/Frameworks (needs Xcode)
-```
-
-* Android: `ParticleCode.init()` opens `libparticlecode_jni.so`, which exports both the JNI
-  scanner and the flutter_rust_bridge symbols.
-* iOS: the xcframework is statically linked and the Rust side keeps the bridge symbols alive;
-  `ParticleCode.init()` uses the process image (`ExternalLibrary.process`). The plugin
-  supports both Swift Package Manager (`ios/particle_code/Package.swift`) and CocoaPods
-  (`ios/particle_code.podspec`); with SwiftPM, set the app's Release/Profile
-  `STRIP_STYLE = non-global` (see `ios/README.md`).
-* Desktop and tests: `$PARTICLECODE_LIB`, else the newest
-  `target/{debug,release}/libparticlecode_ffi.{so,dylib}` found by searching upward from the
-  working directory. Run `cargo build -p particlecode-ffi` first.
-
-`init` fails with `ParticleCodeException` if the library is missing or was built from a
-different Rust API than the generated Dart (the bridge compares content hashes).
+`ParticleCode.init()` loads the library and fails with `ParticleCodeException` if it is
+missing or was built from a different Rust API than the generated Dart (the bridge compares
+content hashes). The plugin supports both Swift Package Manager
+(`ios/particle_code/Package.swift`) and CocoaPods (`ios/particle_code.podspec`).
 
 ## Development
 
 ```sh
-cargo build -p particlecode-ffi        # host library for the tests
 flutter pub get
 flutter analyze
 flutter test
@@ -211,7 +202,8 @@ Tests cover the encoder (sync, async, `FrameSpec.fromDto` against the JSON form)
 real library, a bit-level parity check of the Dart
 motion port against values computed by `particlecode-core` (fixtures in
 `test/fixtures/`, generator `gen_motion_reference.rs`), pixel-exact painter checks,
-the view's timing and brightness behavior, and the scanner channels with mocks.
+the view's timing and brightness behavior, and the scanner (mocked camera channels, real
+Rust decoder). `flutter test` builds the library through the hook first.
 
 The motion port uses 64-bit integer arithmetic and therefore targets the Dart VM
 (Android, iOS, desktop); the native bridge rules out the web anyway.

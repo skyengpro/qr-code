@@ -3,54 +3,11 @@ import 'dart:io';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     show ExternalLibrary;
 
-import 'exception.dart';
-
-/// Environment variable naming the native library on desktop hosts and in tests.
-const String libraryEnvVar = 'PARTICLECODE_LIB';
-
-/// Opens the native Particle Code library for the current platform, for
-/// `RustLib.init(externalLibrary: ...)`.
-///
-/// * Android: `libparticlecode_jni.so` (built into the plugin's `jniLibs`; it exports the
-///   flutter_rust_bridge symbols as well as the JNI scanner entry points).
-/// * iOS: the symbols linked into the app by `ParticleCodeFFI.xcframework` (the process
-///   image).
-/// * Other hosts (tests, desktop): the file named by `$PARTICLECODE_LIB`, otherwise the
-///   newest `target/{debug,release}/libparticlecode_ffi.{so,dylib}` found by searching
-///   upwards from the working directory.
-///
-/// Throws [ParticleCodeException] when nothing can be opened.
-ExternalLibrary openParticleLibrary() {
-  try {
-    if (Platform.isAndroid) {
-      return ExternalLibrary.open('libparticlecode_jni.so');
-    }
-    if (Platform.isIOS) {
-      return ExternalLibrary.process(iKnowHowToUseIt: true);
-    }
-    final path = findHostLibrary();
-    if (path == null) {
-      throw const ParticleCodeException(
-        'particlecode native library not found. Set \$$libraryEnvVar or run '
-        '`cargo build -p particlecode-ffi` in the workspace.',
-      );
-    }
-    return ExternalLibrary.open(path);
-  } on ArgumentError catch (e) {
-    throw ParticleCodeException(
-      'cannot open particlecode library: ${e.message}',
-    );
-  } on UnsupportedError catch (e) {
-    throw ParticleCodeException(
-      'cannot open particlecode library: ${e.message}',
-    );
-  }
-}
-
-/// File name of the host library for [os] (a `Platform.operatingSystem` value).
+/// File name of the Rust library for [os] (a `Platform.operatingSystem` value).
 String hostLibraryName(String os) {
   switch (os) {
     case 'macos':
+    case 'ios':
       return 'libparticlecode_ffi.dylib';
     case 'windows':
       return 'particlecode_ffi.dll';
@@ -59,36 +16,27 @@ String hostLibraryName(String os) {
   }
 }
 
-/// Finds the host library via `$PARTICLECODE_LIB` or the workspace `target` directory.
+/// Where `flutter test` (and `flutter run` on a desktop host) leaves the library that the
+/// plugin's Native Assets hook built: `build/native_assets/<os>/` under [root], which
+/// defaults to the working directory (the package being tested).
+File nativeAssetsLibrary({Directory? root, String? os}) {
+  final system = os ?? Platform.operatingSystem;
+  final sep = Platform.pathSeparator;
+  final base = (root ?? Directory.current).path;
+  return File(
+    '$base${sep}build${sep}native_assets$sep$system$sep${hostLibraryName(system)}',
+  );
+}
+
+/// The library to hand to `RustLib.init`, or `null` to let flutter_rust_bridge's default
+/// loader find it.
 ///
-/// Returns `null` if neither exists. [start] defaults to the working directory.
-String? findHostLibrary({Directory? start, Map<String, String>? environment}) {
-  final env = environment ?? Platform.environment;
-  final fromEnv = env[libraryEnvVar];
-  if (fromEnv != null && fromEnv.isNotEmpty) {
-    return fromEnv;
-  }
-  final name = hostLibraryName(Platform.operatingSystem);
-  var dir = (start ?? Directory.current).absolute;
-  while (true) {
-    File? best;
-    DateTime? bestTime;
-    for (final profile in const ['debug', 'release']) {
-      final file = File(
-        '${dir.path}${Platform.pathSeparator}target'
-        '${Platform.pathSeparator}$profile${Platform.pathSeparator}$name',
-      );
-      if (file.existsSync()) {
-        final modified = file.statSync().modified;
-        if (bestTime == null || modified.isAfter(bestTime)) {
-          best = file;
-          bestTime = modified;
-        }
-      }
-    }
-    if (best != null) return best.path;
-    final parent = dir.parent;
-    if (parent.path == dir.path) return null;
-    dir = parent;
-  }
+/// Apps need no help: Native Assets bundles `libparticlecode_ffi.so` into the APK,
+/// `particlecode_ffi.framework` into the iOS app and the library next to a desktop
+/// executable, which is where the default loader looks. Only `flutter test` keeps the
+/// library outside any bundle, in `build/native_assets/<os>/`; this opens it from there.
+ExternalLibrary? openParticleLibrary({Directory? root}) {
+  if (Platform.isAndroid || Platform.isIOS) return null;
+  final file = nativeAssetsLibrary(root: root);
+  return file.existsSync() ? ExternalLibrary.open(file.path) : null;
 }

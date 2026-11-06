@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'dto.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `bad_buffers`, `chroma`, `feed_yuv_slices`, `process`, `rejected`, `try_feed_rgba`, `try_feed_yuv`, `view`, `vision_hint`
+// These functions are ignored because they are not marked as `pub`: `bad_buffers`, `chroma`, `feed_yuv_slices`, `process`, `rejected`, `try_feed_rgba`, `try_feed_yuv`, `view`, `vision_hint`, `with_hint`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `YuvPlanes`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `fmt`
 
@@ -15,6 +15,22 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 abstract class ParticleDecoder implements RustOpaqueInterface {
   static Future<ParticleDecoder> default_() =>
       RustLib.instance.api.crateApiDecoderParticleDecoderDefault();
+
+  /// Feed one camera frame **in place**: the planes are read straight from the camera's
+  /// memory at the addresses in `frame`, with no copy (pointer handoff; see the plugin's
+  /// `PROTOCOL.md`). The bridge runs this on its Rust thread pool, so the Dart `Future`
+  /// completes once the frame has been decoded.
+  ///
+  /// # Contract
+  ///
+  /// The caller guarantees that each `*_address` points to at least `*_len` readable bytes
+  /// that stay valid and unchanged until the returned `Future` completes: the plugin's
+  /// native camera code holds the frame (Android `ImageProxy`, iOS locked `CVPixelBuffer`)
+  /// until Dart releases it after this call. The decoder checks that no address is null
+  /// and that the lengths are consistent with the dimensions and strides before it reads
+  /// anything; a frame failing those checks is a rejection, never an error. Nothing is read
+  /// outside the stated lengths, and nothing is written.
+  Future<FrameResultDto> feedCameraFrame({required CameraFrameDto frame});
 
   /// Feed one RGBA8 camera frame (`4 * width * height` tightly packed bytes), for desktop
   /// and webcam capture. Alpha is ignored. See [`feed_yuv`](Self::feed_yuv) for the

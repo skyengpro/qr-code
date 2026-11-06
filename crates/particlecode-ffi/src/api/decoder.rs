@@ -5,7 +5,9 @@ use flutter_rust_bridge::frb;
 use particlecode_core::{DecodeError, Progress, Receiver, Sym3};
 use particlecode_vision::{PlaneRef, VisionError, YuvFrame, YuvRef, locate, read, sharpness};
 
-use super::dto::{FrameResultDto, ImagePointDto, LivenessDto, ProgressDto};
+use super::dto::{
+    CameraFrameDto, FrameResultDto, HintDto, ImagePointDto, LivenessDto, ProgressDto,
+};
 
 /// A decoder session. Opaque to the host language; feed it frames until
 /// [`ProgressDto::Done`], or until the UI gives up and drops it.
@@ -97,6 +99,49 @@ impl ParticleDecoder {
         )
     }
 
+    /// Feed one camera frame **in place**: the planes are read straight from the camera's
+    /// memory at the addresses in `frame`, with no copy (pointer handoff; see the plugin's
+    /// `PROTOCOL.md`). The bridge runs this on its Rust thread pool, so the Dart `Future`
+    /// completes once the frame has been decoded.
+    ///
+    /// # Contract
+    ///
+    /// The caller guarantees that each `*_address` points to at least `*_len` readable bytes
+    /// that stay valid and unchanged until the returned `Future` completes: the plugin's
+    /// native camera code holds the frame (Android `ImageProxy`, iOS locked `CVPixelBuffer`)
+    /// until Dart releases it after this call. The decoder checks that no address is null
+    /// and that the lengths are consistent with the dimensions and strides before it reads
+    /// anything; a frame failing those checks is a rejection, never an error. Nothing is read
+    /// outside the stated lengths, and nothing is written.
+    pub fn feed_camera_frame(&mut self, frame: CameraFrameDto) -> FrameResultDto {
+        let planes = [
+            (frame.y_address, frame.y_len),
+            (frame.u_address, frame.u_len),
+            (frame.v_address, frame.v_len),
+        ];
+        if planes
+            .iter()
+            .any(|&(address, len)| address == 0 || len == 0 || isize::try_from(len).is_err())
+        {
+            return FrameResultDto::bad_buffers();
+        }
+        let [y, u, v] = planes.map(|(address, len)| {
+            // SAFETY: non-null and at most isize::MAX bytes (checked above); readable,
+            // valid and unchanged for the whole call is the caller's documented contract.
+            // The slices do not outlive this call.
+            #[allow(unsafe_code)]
+            unsafe {
+                std::slice::from_raw_parts(address as *const u8, len)
+            }
+        });
+        self.feed_yuv_slices(
+            frame.width,
+            frame.height,
+            (y, u, v),
+            (frame.y_stride, frame.uv_stride, frame.uv_pixel_stride),
+        )
+    }
+
     /// Feed one RGBA8 camera frame (`4 * width * height` tightly packed bytes), for desktop
     /// and webcam capture. Alpha is ignored. See [`feed_yuv`](Self::feed_yuv) for the
     /// result.
@@ -106,8 +151,8 @@ impl ParticleDecoder {
     }
 
     /// [`feed_yuv`](Self::feed_yuv) over borrowed buffers; `strides` is
-    /// `(y_stride, uv_stride, uv_pixel_stride)`. Not bridged: it is what the C ABI calls,
-    /// so camera memory is never copied except for de-interleaving chroma.
+    /// `(y_stride, uv_stride, uv_pixel_stride)`. Camera memory is never copied except for
+    /// de-interleaving chroma.
     ///
     /// `None` if the buffers are inconsistent with the dimensions and strides.
     pub(crate) fn try_feed_yuv(
@@ -190,8 +235,7 @@ impl ParticleDecoder {
                         reason: e.to_string(),
                     },
                     reject_reason: Some(e.to_string()),
-                    hint: Some(vision_hint(&e).into()),
-                    ..locked
+                    ..locked.with_hint(vision_hint(&e))
                 };
             }
         };
@@ -199,13 +243,16 @@ impl ParticleDecoder {
         let (reject_reason, hint) = match &progress {
             Progress::Rejected(e) => (
                 Some(e.to_string()),
-                matches!(
+                if matches!(
                     e,
                     DecodeError::ShapeTableMismatch(_) | DecodeError::UnknownShape(_)
-                )
-                .then(|| UPDATE_HINT.to_owned()),
+                ) {
+                    HintDto::UpdateApp
+                } else {
+                    HintDto::None
+                },
             ),
-            _ => (None, None),
+            _ => (None, HintDto::None),
         };
         FrameResultDto {
             profile: Some(header.profile.into()),
@@ -213,8 +260,7 @@ impl ParticleDecoder {
             liveness: liveness.into(),
             progress: progress.into(),
             reject_reason,
-            hint,
-            ..locked
+            ..locked.with_hint(hint)
         }
     }
 
@@ -233,18 +279,16 @@ impl ParticleDecoder {
     }
 }
 
-const UPDATE_HINT: &str = "This code needs a newer version of the app";
-
 /// User-facing advice for a vision failure.
-fn vision_hint(e: &VisionError) -> &'static str {
+fn vision_hint(e: &VisionError) -> HintDto {
     match e {
-        VisionError::NoLock => "Point the camera at the code",
-        VisionError::Truncated => "Move back: the whole code must be in view",
+        VisionError::NoLock => HintDto::PointAtCode,
+        VisionError::Truncated => HintDto::MoveBack,
         VisionError::Residual | VisionError::ProfileMismatch | VisionError::Header(_) => {
-            "Hold the phone steady, facing the code"
+            HintDto::HoldSteady
         }
-        VisionError::Lighting => "Too dark or too much glare: change the angle or the light",
-        VisionError::UnknownShape(_) => UPDATE_HINT,
+        VisionError::Lighting => HintDto::Lighting,
+        VisionError::UnknownShape(_) => HintDto::UpdateApp,
     }
 }
 
@@ -272,7 +316,18 @@ impl FrameResultDto {
                 reason: reason.clone(),
             },
             reject_reason: Some(reason),
-            hint: Some(vision_hint(&e).into()),
+            hint: None,
+            hint_code: HintDto::None,
+        }
+        .with_hint(vision_hint(&e))
+    }
+
+    /// Sets `hint` and `hint_code` together.
+    fn with_hint(self, code: HintDto) -> FrameResultDto {
+        FrameResultDto {
+            hint: code.text().map(str::to_owned),
+            hint_code: code,
+            ..self
         }
     }
 }

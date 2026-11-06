@@ -1,6 +1,5 @@
-// Runs the real Rust library on the host through flutter_rust_bridge. Build it first:
-//   cargo build -p particlecode-ffi
-// (or point $PARTICLECODE_LIB at it).
+// Runs the real Rust library on the host through flutter_rust_bridge. `flutter test` builds
+// it first through the plugin's Native Assets hook (hook/build.dart).
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -32,11 +31,7 @@ void main() {
   setUpAll(ParticleCode.init);
 
   test('library is found', () {
-    expect(
-      findHostLibrary(),
-      isNotNull,
-      reason: 'run cargo build -p particlecode-ffi',
-    );
+    expect(nativeAssetsLibrary().existsSync(), isTrue);
     expect(ParticleCode.isInitialized, isTrue);
   });
 
