@@ -7,7 +7,6 @@ import 'package:flutter/widgets.dart';
 import 'display.dart';
 import 'encoder.dart';
 import 'frame_spec.dart';
-import 'frame_worker.dart';
 import 'motion.dart';
 import 'painter.dart';
 import 'palette.dart';
@@ -23,8 +22,9 @@ import 'palette.dart';
 /// the screen on (`particle_code/display`); both are restored when the widget is
 /// disposed or [showing] turns `false`.
 ///
-/// Frames are prefetched on a background isolate (see [useBackgroundIsolate]); the
-/// particles' liveness second is the one at which each frame will be shown.
+/// Frames are prefetched with [ParticleEncoder.frameAsync] (built on the bridge's Rust
+/// thread pool, a few frames ahead of the clock); the particles' liveness second is the
+/// one at which each frame will be shown. The first frame is built synchronously.
 ///
 /// The widget is a square: with [size] it is `size x size` logical pixels, otherwise it
 /// takes the largest square that fits the incoming constraints.
@@ -39,6 +39,7 @@ class ParticleCodeView extends StatefulWidget {
     this.showing = true,
     this.margin = defaultMargin,
     this.unixClock,
+    @Deprecated('Has no effect; frames are prefetched with frameAsync.')
     this.useBackgroundIsolate = true,
   });
 
@@ -64,18 +65,16 @@ class ParticleCodeView extends StatefulWidget {
   /// Source of the wall clock in Unix seconds; defaults to `DateTime.now()`. Tests only.
   final int Function()? unixClock;
 
-  /// Build frames on a background isolate (default). The isolate has its own encoder
-  /// with the same identity, runs ahead of the data clock and hands over compact typed
-  /// arrays, so the UI isolate never does Reed-Solomon or JSON work after start-up. The
-  /// first frames, and any frame the worker is badly late with, are built synchronously;
-  /// if the isolate cannot start, the view silently stays on the synchronous path.
+  /// No longer has any effect: frames are always prefetched with
+  /// [ParticleEncoder.frameAsync], which runs on the bridge's thread pool, not an isolate.
+  @Deprecated('Has no effect; frames are prefetched with frameAsync.')
   final bool useBackgroundIsolate;
 
   @override
   State<ParticleCodeView> createState() => _ParticleCodeViewState();
 }
 
-/// How many data frames the worker prefetches ahead of the clock.
+/// How many data frames are prefetched ahead of the clock.
 const int _prefetchAhead = 2;
 
 class _ParticleCodeViewState extends State<ParticleCodeView>
@@ -89,10 +88,10 @@ class _ParticleCodeViewState extends State<ParticleCodeView>
   int _elapsedMs = 0;
   bool _holdsDisplay = false;
 
-  // Background generation.
-  FrameWorker? _worker;
-  bool _workerFailed = false;
-  bool _workerDelivered = false;
+  // Asynchronous prefetch. `_generation` invalidates results of earlier encoders/runs.
+  int _generation = 0;
+  bool _asyncFailed = false;
+  bool _asyncDelivered = false;
   final Map<int, FrameSpec> _ready = {};
   final Set<int> _requested = {};
   int? _lateSinceMs;
@@ -116,10 +115,8 @@ class _ParticleCodeViewState extends State<ParticleCodeView>
   void didUpdateWidget(ParticleCodeView old) {
     super.didUpdateWidget(old);
     if (old.encoder != widget.encoder) {
-      _workerFailed = false;
+      _asyncFailed = false;
       _stop();
-    } else if (old.useBackgroundIsolate != widget.useBackgroundIsolate) {
-      _stopWorker();
     }
     _sync();
   }
@@ -127,7 +124,7 @@ class _ParticleCodeViewState extends State<ParticleCodeView>
   @override
   void dispose() {
     _ticker.dispose();
-    _stopWorker();
+    _stopAsync();
     _releaseDisplay();
     super.dispose();
   }
@@ -142,7 +139,6 @@ class _ParticleCodeViewState extends State<ParticleCodeView>
         _previous = null;
         _current = _fetchSync(0);
       }
-      _startWorker();
       if (!_ticker.isActive) {
         // Restarting resets `elapsed`, so the clock restarts with the frame index.
         _ticker.start();
@@ -157,45 +153,35 @@ class _ParticleCodeViewState extends State<ParticleCodeView>
     if (_ticker.isActive) _ticker.stop();
     _current = null;
     _previous = null;
-    _stopWorker();
+    _stopAsync();
     _releaseDisplay();
   }
 
-  void _startWorker() {
-    if (_worker != null || _workerFailed || !widget.useBackgroundIsolate) {
-      return;
-    }
-    final spec = widget.encoder.workerSpec;
-    if (spec == null) return;
-    _worker = FrameWorker.start(
-      spec,
-      onFrame: _onWorkerFrame,
-      onFailure: _onWorkerFailure,
-    );
-  }
-
-  void _stopWorker() {
-    _worker?.dispose();
-    _worker = null;
-    _workerDelivered = false;
+  void _stopAsync() {
+    _generation++;
+    _asyncDelivered = false;
     _ready.clear();
     _requested.clear();
     _lateSinceMs = null;
   }
 
-  void _onWorkerFrame(int index, FrameSpec frame) {
+  void _onAsyncFrame(int generation, int index, FrameSpec frame) {
+    if (!mounted || generation != _generation) return;
     _requested.remove(index);
-    _workerDelivered = true;
+    _asyncDelivered = true;
     if (index > _index) _ready[index] = frame;
   }
 
-  void _onWorkerFailure(Object error) {
+  void _onAsyncFailure(int generation, int index, Object error) {
+    if (!mounted || generation != _generation) return;
+    _requested.remove(index);
+    if (widget.encoder.isDisposed) return;
     debugPrint(
-      'particle_code: background frame generation failed ($error); '
+      'particle_code: asynchronous frame generation failed ($error); '
       'building frames on the UI isolate instead',
     );
-    _workerFailed = true;
-    _stopWorker();
+    _asyncFailed = true;
+    _stopAsync();
   }
 
   void _acquireDisplay() {
@@ -221,17 +207,24 @@ class _ParticleCodeViewState extends State<ParticleCodeView>
     return (_nowMs() + startMs - _elapsedMs) ~/ 1000;
   }
 
-  /// Keeps `[clockIndex, clockIndex + _prefetchAhead]` requested from the worker.
+  /// Keeps `[clockIndex, clockIndex + _prefetchAhead]` requested from the encoder.
   void _prefetch(int clockIndex) {
-    final worker = _worker;
-    if (worker == null || !worker.isReady) return;
+    final encoder = widget.encoder;
+    if (_asyncFailed || encoder.isDisposed) return;
     _requested.removeWhere((i) => i < clockIndex);
+    final generation = _generation;
     for (var i = clockIndex; i <= clockIndex + _prefetchAhead; i++) {
       if (i == _index || _ready.containsKey(i) || _requested.contains(i)) {
         continue;
       }
       _requested.add(i);
-      worker.request(i, _predictedUnix(i), floor: clockIndex);
+      final index = i;
+      encoder
+          .frameAsync(index, unixSeconds: _predictedUnix(index))
+          .then(
+            (frame) => _onAsyncFrame(generation, index, frame),
+            onError: (Object e) => _onAsyncFailure(generation, index, e),
+          );
     }
   }
 
@@ -254,8 +247,8 @@ class _ParticleCodeViewState extends State<ParticleCodeView>
       if (nextIndex != _index) {
         next = _ready[nextIndex];
         _lateSinceMs = null;
-      } else if (_worker != null && _workerDelivered && _worker!.isReady) {
-        // The worker is running but late with this frame: keep showing the current
+      } else if (_asyncDelivered && !_asyncFailed) {
+        // Prefetching works but is late with this frame: keep showing the current
         // one, up to a limit, instead of stalling the UI with a synchronous build.
         _lateSinceMs ??= _elapsedMs;
         final limit = math.max(250, 3000 ~/ _fps);

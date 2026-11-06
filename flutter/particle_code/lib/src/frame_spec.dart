@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'dart:ui';
 
 import 'palette.dart';
+import 'rust/api/dto.dart' as dto;
 
 /// Lattice density announced in the header.
 enum CodeProfile {
@@ -232,8 +233,8 @@ class FrameDot {
 
 /// An immutable list of dots stored as parallel typed arrays.
 ///
-/// A data frame has thousands of dots; holding them as arrays keeps parsing cheap, lets a
-/// frame cross isolates as a few typed-data blocks, and lets the painter read the numbers
+/// A data frame has thousands of dots; holding them as the bridge's typed arrays keeps
+/// conversion free (no copy, no objects), and lets the painter read the numbers
 /// without allocating an object per dot. It still behaves as a `List<FrameDot>` (dots are
 /// created on access).
 final class FrameDots extends ListBase<FrameDot> {
@@ -343,19 +344,6 @@ final class FrameDots extends ListBase<FrameDot> {
   @override
   void operator []=(int index, FrameDot value) =>
       throw UnsupportedError('FrameDots is immutable');
-
-  /// The arrays as a message for another isolate (see [FrameDots.fromMessage]).
-  List<Object?> toMessage() => [q, r, x, y, color, size];
-
-  /// Rebuilds dots from [toMessage]'s output.
-  factory FrameDots.fromMessage(List<Object?> m) => FrameDots.fromArrays(
-    q: m[0]! as Int32List,
-    r: m[1]! as Int32List,
-    x: m[2]! as Float64List,
-    y: m[3]! as Float64List,
-    color: m[4]! as Uint8List,
-    size: m[5]! as Uint8List,
-  );
 }
 
 /// A particle speck.
@@ -475,10 +463,75 @@ class FrameSpec {
   }) : headerDots = FrameDots.from(headerDots),
        dots = FrameDots.from(dots);
 
-  /// Parses the JSON text produced by `pc_encoder_frame_json[_at]`.
-  ///
-  /// [dots] replaces the payload dots of [json] when given (used by the fast parser).
-  factory FrameSpec.fromJson(Map<String, Object?> json, {FrameDots? dots}) {
+  /// Builds a frame from the typed bridge object. The dot arrays are wrapped, not
+  /// copied, and no per-dot objects are created.
+  factory FrameSpec.fromDto(dto.FrameDto f) {
+    final profile = CodeProfile.values[f.profile.index];
+    return FrameSpec(
+      index: f.index,
+      header: FrameHeader(
+        shapeTableVersion: f.shapeTableVersion,
+        profile: profile,
+        palette: 'Hues${f.paletteHues}',
+        isStatic: f.isStatic,
+        shapeId: f.shapeId,
+        sessionId: f.sessionId,
+        payloadLen: f.payloadLen,
+        segmentKbLog2: f.segmentKbLog2,
+        segmentIndex: f.segmentIndex,
+        packetSeed: f.packetSeed,
+      ),
+      profile: profile,
+      frameHalfSide: f.frameHalfSide,
+      particleBand: ParticleBand(
+        inner: f.particleBandInner,
+        outer: f.particleBandOuter,
+      ),
+      anchors: List.unmodifiable([
+        for (final a in f.anchors)
+          AnchorSpec(
+            at: Offset(a.x, a.y),
+            coreR: a.coreR,
+            ringIn: a.ringIn,
+            ringOut: a.ringOut,
+            pupilR: a.pupilR,
+          ),
+      ]),
+      swatches: List.unmodifiable([
+        for (final s in f.swatches)
+          Swatch(
+            at: Offset(s.x, s.y),
+            color: switch (s.color) {
+              dto.SwatchColorDto_Hue(:final index) => SwatchColor.hue(
+                index & 3,
+              ),
+              dto.SwatchColorDto_White() => const SwatchColor.white(),
+              dto.SwatchColorDto_Black() => const SwatchColor.black(),
+            },
+            anchor: s.anchor,
+            slot: s.slot,
+          ),
+      ]),
+      headerDots: _dots(f.headerDots),
+      dots: _dots(f.dots),
+      particles: List.unmodifiable([
+        for (final p in f.particles)
+          ParticleSpec(sector: p.sector, angle: p.angle),
+      ]),
+    );
+  }
+
+  static FrameDots _dots(dto.DotsDto d) => FrameDots.fromArrays(
+    q: d.qs,
+    r: d.rs,
+    x: d.xs,
+    y: d.ys,
+    color: d.colors,
+    size: d.sizes,
+  );
+
+  /// Parses the JSON text of `ParticleEncoder.frameJson`.
+  factory FrameSpec.fromJson(Map<String, Object?> json) {
     List<T> list<T>(String key, T Function(Map<String, Object?>) f) =>
         List.unmodifiable(
           (json[key]! as List<Object?>).map(
@@ -496,7 +549,7 @@ class FrameSpec {
       anchors: list('anchors', AnchorSpec.fromJson),
       swatches: list('swatches', Swatch.fromJson),
       headerDots: FrameDots.fromJson(json['header_dots']! as List<Object?>),
-      dots: dots ?? FrameDots.fromJson(json['dots']! as List<Object?>),
+      dots: FrameDots.fromJson(json['dots']! as List<Object?>),
       particles: list('particles', ParticleSpec.fromJson),
     );
   }
@@ -531,131 +584,72 @@ class FrameSpec {
   /// Six particles.
   final List<ParticleSpec> particles;
 
-  /// Flattens the frame into plain lists and typed arrays that cross an isolate boundary
-  /// cheaply. Rebuild with [FrameSpec.fromMessage].
-  List<Object?> toMessage() {
-    final a = Float64List(anchors.length * 6);
-    for (var i = 0; i < anchors.length; i++) {
-      final s = anchors[i];
-      a.setAll(i * 6, [
-        s.at.dx,
-        s.at.dy,
-        s.coreR,
-        s.ringIn,
-        s.ringOut,
-        s.pupilR,
-      ]);
-    }
-    final sw = Float64List(swatches.length * 2);
-    final swi = Uint8List(swatches.length * 4);
-    for (var i = 0; i < swatches.length; i++) {
-      final s = swatches[i];
-      sw[i * 2] = s.at.dx;
-      sw[i * 2 + 1] = s.at.dy;
-      swi[i * 4] = s.color.kind.index;
-      swi[i * 4 + 1] = s.color.hue;
-      swi[i * 4 + 2] = s.anchor;
-      swi[i * 4 + 3] = s.slot;
-    }
-    final pa = Float64List(particles.length);
-    final ps = Uint8List(particles.length);
-    for (var i = 0; i < particles.length; i++) {
-      pa[i] = particles[i].angle;
-      ps[i] = particles[i].sector;
-    }
-    final h = header;
-    return [
-      index,
-      [
-        h.shapeTableVersion,
-        h.profile.index,
-        h.palette,
-        h.isStatic,
-        h.shapeId,
-        h.sessionId,
-        h.payloadLen,
-        h.segmentKbLog2,
-        h.segmentIndex,
-        h.packetSeed,
-      ],
-      profile.index,
-      frameHalfSide,
-      particleBand.inner,
-      particleBand.outer,
-      a,
-      sw,
-      swi,
-      headerDots.toMessage(),
-      dots.toMessage(),
-      pa,
-      ps,
-    ];
-  }
-
-  /// Rebuilds a frame from [toMessage]'s output.
-  factory FrameSpec.fromMessage(List<Object?> m) {
-    final h = m[1]! as List<Object?>;
-    final a = m[6]! as Float64List;
-    final sw = m[7]! as Float64List;
-    final swi = m[8]! as Uint8List;
-    final pa = m[11]! as Float64List;
-    final ps = m[12]! as Uint8List;
-    return FrameSpec(
-      index: m[0]! as int,
-      header: FrameHeader(
-        shapeTableVersion: h[0]! as int,
-        profile: CodeProfile.values[h[1]! as int],
-        palette: h[2]! as String,
-        isStatic: h[3]! as bool,
-        shapeId: h[4]! as int,
-        sessionId: h[5]! as int,
-        payloadLen: h[6]! as int,
-        segmentKbLog2: h[7]! as int,
-        segmentIndex: h[8]! as int,
-        packetSeed: h[9]! as int,
-      ),
-      profile: CodeProfile.values[m[2]! as int],
-      frameHalfSide: m[3]! as double,
-      particleBand: ParticleBand(
-        inner: m[4]! as double,
-        outer: m[5]! as double,
-      ),
-      anchors: List.unmodifiable([
-        for (var i = 0; i < a.length; i += 6)
-          AnchorSpec(
-            at: Offset(a[i], a[i + 1]),
-            coreR: a[i + 2],
-            ringIn: a[i + 3],
-            ringOut: a[i + 4],
-            pupilR: a[i + 5],
-          ),
-      ]),
-      swatches: List.unmodifiable([
-        for (var i = 0; i < sw.length ~/ 2; i++)
-          Swatch(
-            at: Offset(sw[i * 2], sw[i * 2 + 1]),
-            color: switch (SwatchKind.values[swi[i * 4]]) {
-              SwatchKind.hue => SwatchColor.hue(swi[i * 4 + 1]),
-              SwatchKind.white => const SwatchColor.white(),
-              SwatchKind.black => const SwatchColor.black(),
-            },
-            anchor: swi[i * 4 + 2],
-            slot: swi[i * 4 + 3],
-          ),
-      ]),
-      headerDots: FrameDots.fromMessage(m[9]! as List<Object?>),
-      dots: FrameDots.fromMessage(m[10]! as List<Object?>),
-      particles: List.unmodifiable([
-        for (var i = 0; i < pa.length; i++)
-          ParticleSpec(sector: ps[i], angle: pa[i]),
-      ]),
-    );
-  }
-
   /// Whether [other] describes exactly the same frame (every field, bit for bit).
   bool sameAs(FrameSpec other) {
-    final a = toMessage(), b = other.toMessage();
-    return _deepEq(a, b);
+    final h = header, o = other.header;
+    if (index != other.index ||
+        profile != other.profile ||
+        frameHalfSide != other.frameHalfSide ||
+        particleBand.inner != other.particleBand.inner ||
+        particleBand.outer != other.particleBand.outer ||
+        h.shapeTableVersion != o.shapeTableVersion ||
+        h.profile != o.profile ||
+        h.palette != o.palette ||
+        h.isStatic != o.isStatic ||
+        h.shapeId != o.shapeId ||
+        h.sessionId != o.sessionId ||
+        h.payloadLen != o.payloadLen ||
+        h.segmentKbLog2 != o.segmentKbLog2 ||
+        h.segmentIndex != o.segmentIndex ||
+        h.packetSeed != o.packetSeed ||
+        anchors.length != other.anchors.length ||
+        swatches.length != other.swatches.length ||
+        particles.length != other.particles.length) {
+      return false;
+    }
+    for (var i = 0; i < anchors.length; i++) {
+      final a = anchors[i], b = other.anchors[i];
+      if (a.at != b.at ||
+          a.coreR != b.coreR ||
+          a.ringIn != b.ringIn ||
+          a.ringOut != b.ringOut ||
+          a.pupilR != b.pupilR) {
+        return false;
+      }
+    }
+    for (var i = 0; i < swatches.length; i++) {
+      final a = swatches[i], b = other.swatches[i];
+      if (a.at != b.at ||
+          a.color != b.color ||
+          a.anchor != b.anchor ||
+          a.slot != b.slot) {
+        return false;
+      }
+    }
+    for (var i = 0; i < particles.length; i++) {
+      if (particles[i].sector != other.particles[i].sector ||
+          particles[i].angle != other.particles[i].angle) {
+        return false;
+      }
+    }
+    return _sameDots(headerDots, other.headerDots) &&
+        _sameDots(dots, other.dots);
+  }
+
+  static bool _sameDots(FrameDots a, FrameDots b) {
+    final n = a.length;
+    if (n != b.length) return false;
+    for (var i = 0; i < n; i++) {
+      if (a.q[i] != b.q[i] ||
+          a.r[i] != b.r[i] ||
+          a.x[i] != b.x[i] ||
+          a.y[i] != b.y[i] ||
+          a.color[i] != b.color[i] ||
+          a.size[i] != b.size[i]) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /// Half-side of the visible square for a quiet zone of [margin] pitches
@@ -669,15 +663,4 @@ double _num(Object? v) => (v! as num).toDouble();
 Offset _point(Object? v) {
   final m = v! as Map<String, Object?>;
   return Offset(_num(m['x']), _num(m['y']));
-}
-
-bool _deepEq(Object? a, Object? b) {
-  if (a is List && b is List) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (!_deepEq(a[i], b[i])) return false;
-    }
-    return true;
-  }
-  return a == b;
 }

@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:particle_code/particle_code.dart';
 
 import 'scan_tab.dart';
 import 'send_tab.dart';
 
-void main() => runApp(const ExampleApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Loads the Rust library behind the sender; required before any ParticleEncoder.
+  await ParticleCode.init();
+  runApp(const ExampleApp());
+}
 
 class ExampleApp extends StatelessWidget {
   const ExampleApp({super.key});

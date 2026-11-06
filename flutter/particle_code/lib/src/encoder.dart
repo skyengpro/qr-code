@@ -1,13 +1,12 @@
-import 'dart:convert';
-import 'dart:ffi';
-
-import 'package:ffi/ffi.dart';
-import 'package:flutter/foundation.dart';
+import 'dart:typed_data';
 
 import 'exception.dart';
-import 'ffi/bindings.dart';
-import 'frame_json.dart';
 import 'frame_spec.dart';
+import 'init.dart';
+import 'rust/api/dto.dart' as dto;
+import 'rust/api/encoder.dart' as rust;
+import 'rust/api/error.dart' show FfiError;
+import 'rust/api/liveness.dart' as rust_liveness;
 
 /// How a [Shape] is chosen by the encoder.
 enum ShapeMode {
@@ -83,7 +82,7 @@ class Shape {
   /// This shape, but falling back to the disc if it does not fit.
   Shape get preferred => Shape._(id, ShapeMode.prefer, const []);
 
-  /// The JSON form of the C ABI config (`{"kind":"require","id":0}` and so on).
+  /// The JSON form of the shape choice (`{"kind":"require","id":0}` and so on).
   Map<String, Object?> toJson() => switch (mode) {
     ShapeMode.require => {'kind': 'require', 'id': id},
     ShapeMode.prefer => {'kind': 'prefer', 'id': id},
@@ -134,7 +133,7 @@ class DisplayInfo {
   /// Physical height of that area in millimetres.
   final double heightMm;
 
-  /// JSON form of the C ABI config.
+  /// JSON form of the display facts.
   Map<String, Object?> toJson() => {
     'width_px': widthPx,
     'height_px': heightPx,
@@ -143,7 +142,7 @@ class DisplayInfo {
   };
 }
 
-/// Options for [ParticleEncoder.create]. Mirrors the C ABI's JSON config.
+/// Options for [ParticleEncoder.create].
 class EncoderOptions {
   /// Creates options. Everything is optional.
   const EncoderOptions({
@@ -194,7 +193,7 @@ class EncoderOptions {
   /// The display the code will be shown on.
   final DisplayInfo? display;
 
-  /// The JSON config of `pc_encoder_new`.
+  /// The options as a JSON map (snake_case keys of the Rust `EncoderConfig`).
   Map<String, Object?> toJson() => {
     'segment_kb_log2': segmentKbLog2,
     'profile': profile?.letter,
@@ -210,7 +209,7 @@ class EncoderOptions {
   };
 }
 
-/// Facts about an encoder session (`pc_encoder_info_json`).
+/// Facts about an encoder session.
 class EncoderInfo {
   /// Creates info.
   const EncoderInfo({
@@ -226,7 +225,7 @@ class EncoderInfo {
     required this.quietZone,
   });
 
-  /// Parses the JSON of `pc_encoder_info_json`.
+  /// Parses the JSON form of the Rust `EncoderInfo`.
   factory EncoderInfo.fromJson(Map<String, Object?> json) => EncoderInfo(
     profile: CodeProfile.fromLetter(json['profile']! as String),
     shapeId: (json['shape_id']! as num).toInt(),
@@ -271,160 +270,47 @@ class EncoderInfo {
   final double quietZone;
 }
 
-/// Everything a background isolate needs to rebuild an encoder that produces the same
-/// frames as the one it came from. Plain data, so it can be sent through a `SendPort`.
-class EncoderWorkerSpec {
-  const EncoderWorkerSpec._(this.payload, this.configJson);
-
-  /// The payload bytes.
-  final Uint8List payload;
-
-  /// The JSON config for `pc_encoder_new` with the session identity pinned.
-  final String configJson;
-
-  /// Rebuilds a spec from [toMessage]'s output.
-  factory EncoderWorkerSpec.fromMessage(List<Object?> m) =>
-      EncoderWorkerSpec._(m[0]! as Uint8List, m[1]! as String);
-
-  /// A form suitable for `SendPort.send`.
-  List<Object?> toMessage() => [payload, configJson];
-}
-
 /// An encoder session: turns a payload (typically COSE/CBOR) into a stream of
 /// [FrameSpec]s for [ParticleCodeView] to paint.
 ///
-/// Backed by a native handle. Call [dispose] when done; a `NativeFinalizer` frees the
-/// handle if you forget, but only when the garbage collector gets around to it.
-class ParticleEncoder implements Finalizable {
-  ParticleEncoder._(this._bindings, this._handle, this.info, this.key) {
-    _finalizerFor(_bindings).attach(this, _handle.cast<Void>(), detach: this);
-  }
+/// Backed by a Rust object behind flutter_rust_bridge; call `ParticleCode.init()` once
+/// before creating one. Call [dispose] when done; the bridge frees the object if you
+/// forget, but only when the garbage collector gets around to it.
+class ParticleEncoder {
+  ParticleEncoder._(this._inner, this.info, this.key);
 
   /// Creates an encoder for [payload].
   ///
-  /// Throws [ParticleCodeException] with the native error text if the options are
-  /// invalid, the payload does not fit, or the native library cannot be loaded.
+  /// Throws a [StateError] if `ParticleCode.init()` has not completed, and a
+  /// [ParticleCodeException] with the native error text if the options are invalid or
+  /// the payload does not fit.
   factory ParticleEncoder.create(
     Uint8List payload, {
     EncoderOptions options = const EncoderOptions(),
   }) {
-    final enc = ParticleEncoder.createWith(
-      ParticleBindings.instance,
-      payload,
-      options: options,
-    );
-    enc._workerSpec = EncoderWorkerSpec._(
-      Uint8List.fromList(payload),
-      enc._identityConfigJson(options),
-    );
-    return enc;
-  }
-
-  /// Like [ParticleEncoder.create] with explicit [bindings] (tests). Such an encoder
-  /// cannot be mirrored in a background isolate ([workerSpec] is `null`).
-  factory ParticleEncoder.createWith(
-    ParticleBindings bindings,
-    Uint8List payload, {
-    EncoderOptions options = const EncoderOptions(),
-  }) {
-    final String configJson;
+    ParticleCode.checkInitialized();
+    final config = _toConfig(options);
+    final rust.ParticleEncoder inner;
     try {
-      configJson = jsonEncode(options.toJson());
-    } on JsonUnsupportedObjectError catch (e) {
-      throw ParticleCodeException('invalid encoder options: $e');
+      inner = rust.ParticleEncoder(payload: payload, config: config);
+    } on FfiError catch (e) {
+      throw ParticleCodeException(e.message());
     }
-    return _createRaw(bindings, payload, configJson);
-  }
-
-  /// Creates an encoder from a raw JSON config using the process-wide bindings. This is
-  /// what a background isolate does with an [EncoderWorkerSpec].
-  factory ParticleEncoder.fromWorkerSpec(EncoderWorkerSpec spec) =>
-      _createRaw(ParticleBindings.instance, spec.payload, spec.configJson);
-
-  static ParticleEncoder _createRaw(
-    ParticleBindings bindings,
-    Uint8List payload,
-    String configJson,
-  ) {
-    final configBytes = utf8.encode(configJson);
-
-    final payloadPtr = calloc<Uint8>(payload.isEmpty ? 1 : payload.length);
-    final configPtr = calloc<Uint8>(configBytes.length + 1);
-    final errPtr = calloc<Pointer<Utf8>>();
     try {
-      payloadPtr.asTypedList(payload.length).setAll(0, payload);
-      configPtr.asTypedList(configBytes.length).setAll(0, configBytes);
-      final handle = bindings.encoderNew(
-        payloadPtr,
-        payload.length,
-        configPtr,
-        configBytes.length,
-        errPtr,
+      return ParticleEncoder._(
+        inner,
+        _toInfo(inner.info()),
+        Uint8List.fromList(inner.key()),
       );
-      final err = bindings.takeString(errPtr.value);
-      if (handle == nullptr) {
-        throw ParticleCodeException(err ?? 'pc_encoder_new failed');
-      }
-      try {
-        final info = EncoderInfo.fromJson(
-          _decodeObject(
-            bindings.takeString(bindings.encoderInfoJson(handle)),
-            'encoder info',
-          ),
-        );
-        final keyBytes = _readKey(bindings, handle);
-        return ParticleEncoder._(bindings, handle, info, keyBytes);
-      } on Object {
-        bindings.encoderFree(handle);
-        rethrow;
-      }
-    } finally {
-      calloc.free(payloadPtr);
-      calloc.free(configPtr);
-      calloc.free(errPtr);
+    } on Object {
+      inner.dispose();
+      rethrow;
     }
   }
 
-  /// A config that makes another encoder emit exactly the same frames as this one when
-  /// asked for `frame(i, unixSeconds: s)`: the resolved profile and shape, and the
-  /// identity (session id, key) pinned. The liveness clock origin only matters for
-  /// frames requested without `unixSeconds`.
-  String _identityConfigJson(EncoderOptions options) {
-    final cfg = options.toJson()
-      ..['profile'] = info.profile.letter
-      ..['shape'] = {'kind': 'require', 'id': info.shapeId}
-      ..['session_id'] = info.sessionId
-      ..['key'] = key.toList()
-      ..['clock_origin_unix'] = options.clockOriginUnix ?? 0
-      ..remove('display');
-    return jsonEncode(cfg);
-  }
-
-  EncoderWorkerSpec? _workerSpec;
-
-  /// What a background isolate needs to build an identical encoder, or `null` for an
-  /// encoder made with [ParticleEncoder.createWith].
-  EncoderWorkerSpec? get workerSpec => _workerSpec;
-
-  int _frameCalls = 0;
-
-  /// How many frames this instance has built (on the isolate that owns it). For tests.
-  @visibleForTesting
-  int get debugFrameCalls => _frameCalls;
-
-  // One NativeFinalizer per distinct `pc_encoder_free` address, kept alive for the
-  // life of the isolate.
-  static final Map<int, NativeFinalizer> _finalizers = {};
-
-  static NativeFinalizer _finalizerFor(ParticleBindings bindings) =>
-      _finalizers.putIfAbsent(
-        bindings.encoderFreeAddress.address,
-        () => NativeFinalizer(bindings.encoderFreeAddress),
-      );
-
-  final ParticleBindings _bindings;
-  Pointer<PcEncoder> _handle;
+  final rust.ParticleEncoder _inner;
   bool _disposed = false;
+  int _inFlight = 0;
 
   /// Facts about the session: profile, shape, dot count, segments, frame geometry.
   final EncoderInfo info;
@@ -439,7 +325,7 @@ class ParticleEncoder implements Finalizable {
   /// symbols, so the stream never repeats.
   int get framesPerPass {
     _checkAlive();
-    return _bindings.encoderFramesPerPass(_handle);
+    return info.framesPerPass;
   }
 
   /// Data frames per second the session was configured with.
@@ -448,49 +334,58 @@ class ParticleEncoder implements Finalizable {
   /// Whether [dispose] has been called.
   bool get isDisposed => _disposed;
 
-  /// Frame [i]. With [unixSeconds] the particles show the liveness value of that wall
-  /// clock second (use the real clock when displaying live); without it the clock is
-  /// derived from the frame index and the session's clock origin (deterministic).
+  /// Frame [i], built on the calling isolate. With [unixSeconds] the particles show the
+  /// liveness value of that wall clock second (use the real clock when displaying
+  /// live); without it the clock is derived from the frame index and the session's
+  /// clock origin (deterministic).
+  ///
+  /// Costs a few milliseconds at profile M or L; to keep a UI thread free use
+  /// [frameAsync].
   FrameSpec frame(int i, {int? unixSeconds}) {
     _checkAlive();
-    RangeError.checkValueInInterval(i, 0, 0xFFFFFFFF, 'i');
-    _frameCalls++;
-    final ptr = unixSeconds == null
-        ? _bindings.encoderFrameJson(_handle, i)
-        : _bindings.encoderFrameJsonAt(_handle, i, unixSeconds);
-    if (ptr == nullptr) {
-      throw ParticleCodeException('pc_encoder_frame_json returned NULL for $i');
-    }
+    _checkArgs(i, unixSeconds);
+    final dto = unixSeconds == null
+        ? _inner.frame(i: i)
+        : _inner.frameAt(i: i, unixSeconds: unixSeconds);
+    return FrameSpec.fromDto(dto);
+  }
+
+  /// Like [frame], but the frame is built on the bridge's Rust thread pool and the
+  /// returned future completes with it; the calling isolate only converts the typed
+  /// arrays. Any number of calls may be in flight; they are independent. Disposing the
+  /// encoder while calls are in flight is safe: the native object is released when the
+  /// last one completes.
+  Future<FrameSpec> frameAsync(int i, {int? unixSeconds}) async {
+    _checkAlive();
+    _checkArgs(i, unixSeconds);
+    _inFlight++;
     try {
-      // Parse straight from the library's UTF-8 buffer: no intermediate String.
-      final bytes = ptr.cast<Uint8>().asTypedList(ptr.length);
-      return parseFrameJsonBytes(bytes, dotCountHint: info.dotCount);
-    } on FormatException catch (e) {
-      throw ParticleCodeException('malformed frame $i JSON: ${e.message}');
+      final dto = await _inner.frameAsync(i: i, unixSeconds: unixSeconds);
+      return FrameSpec.fromDto(dto);
     } finally {
-      _bindings.stringFree(ptr);
+      _inFlight--;
+      if (_disposed && _inFlight == 0) _release();
     }
   }
 
   /// The raw JSON text of frame [i] (see [frame]).
   String frameJson(int i, {int? unixSeconds}) {
     _checkAlive();
-    final ptr = unixSeconds == null
-        ? _bindings.encoderFrameJson(_handle, i)
-        : _bindings.encoderFrameJsonAt(_handle, i, unixSeconds);
-    return _bindings.takeString(ptr) ??
-        (throw const ParticleCodeException(
-          'pc_encoder_frame_json returned NULL',
-        ));
+    _checkArgs(i, unixSeconds);
+    return unixSeconds == null
+        ? _inner.frameJson(i: i)
+        : _inner.frameJsonAt(i: i, unixSeconds: unixSeconds);
   }
 
   /// Releases the native encoder. Idempotent; the encoder is unusable afterwards.
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    _finalizerFor(_bindings).detach(this);
-    _bindings.encoderFree(_handle);
-    _handle = nullptr;
+    if (_inFlight == 0) _release();
+  }
+
+  void _release() {
+    if (!_inner.isDisposed) _inner.dispose();
   }
 
   void _checkAlive() {
@@ -498,36 +393,73 @@ class ParticleEncoder implements Finalizable {
       throw StateError('ParticleEncoder used after dispose()');
     }
   }
-}
 
-Uint8List _readKey(ParticleBindings bindings, Pointer<PcEncoder> handle) {
-  final out = calloc<Uint8>(32);
-  try {
-    final rc = bindings.encoderKeyRaw(handle, out);
-    if (rc != 0) {
-      throw ParticleCodeException('pc_encoder_key failed ($rc)');
+  static void _checkArgs(int i, int? unixSeconds) {
+    RangeError.checkValueInInterval(i, 0, 0xFFFFFFFF, 'i');
+    if (unixSeconds != null && unixSeconds < 0) {
+      throw RangeError.value(
+        unixSeconds,
+        'unixSeconds',
+        'must not be negative',
+      );
     }
-    return Uint8List.fromList(out.asTypedList(32));
-  } finally {
-    calloc.free(out);
   }
 }
 
-Map<String, Object?> _decodeObject(String? text, String what) {
-  if (text == null) {
-    throw ParticleCodeException('native library returned no $what');
+dto.EncoderConfig _toConfig(EncoderOptions o) {
+  final display = o.display ?? const DisplayInfo();
+  for (final (name, v) in [
+    ('minPitchMm', o.minPitchMm),
+    ('display.widthMm', display.widthMm),
+    ('display.heightMm', display.heightMm),
+  ]) {
+    if (!v.isFinite) {
+      throw ParticleCodeException('invalid encoder options: $name is $v');
+    }
   }
-  try {
-    return jsonDecode(text) as Map<String, Object?>;
-  } on FormatException catch (e) {
-    throw ParticleCodeException('malformed $what JSON: ${e.message}');
-  }
+  return dto.EncoderConfig(
+    segmentKbLog2: o.segmentKbLog2,
+    profile: o.profile == null ? null : dto.ProfileDto.values[o.profile!.index],
+    fps: o.fps,
+    isStatic: o.isStatic,
+    shape: switch (o.shape.mode) {
+      ShapeMode.require => dto.ShapeChoiceDto.require(id: o.shape.id),
+      ShapeMode.prefer => dto.ShapeChoiceDto.prefer(id: o.shape.id),
+      ShapeMode.auto => dto.ShapeChoiceDto.auto(
+        ids: Uint8List.fromList(o.shape.candidates),
+      ),
+    },
+    repairPerPass: o.repairPerPass,
+    minPitchMm: o.minPitchMm,
+    display: dto.DisplayInfoDto(
+      widthPx: display.widthPx,
+      heightPx: display.heightPx,
+      widthMm: display.widthMm,
+      heightMm: display.heightMm,
+    ),
+    sessionId: o.sessionId,
+    key: o.key == null ? null : Uint8List.fromList(o.key!),
+    clockOriginUnix: o.clockOriginUnix,
+  );
 }
+
+EncoderInfo _toInfo(dto.EncoderInfo i) => EncoderInfo(
+  profile: CodeProfile.values[i.profile.index],
+  shapeId: i.shapeId,
+  dotCount: i.dotCount,
+  blockSize: i.blockSize,
+  segmentCount: i.segmentCount,
+  framesPerPass: i.framesPerPass,
+  sessionId: i.sessionId,
+  fps: i.fps,
+  frameHalfSide: i.frameHalfSide,
+  quietZone: i.quietZone,
+);
 
 /// Checks a liveness [rolling] value from a scanned code against [key].
 ///
 /// Returns `true` if [rolling] is the liveness value of some second within [skew]
-/// seconds of [nowUnix] (`pc_liveness_verify`). [key] must be 32 bytes.
+/// seconds of [nowUnix]. [key] must be 32 bytes. Needs `ParticleCode.init()`.
 bool livenessVerify(
   List<int> key,
   int rolling, {
@@ -537,16 +469,11 @@ bool livenessVerify(
   if (key.length != 32) {
     throw ArgumentError.value(key.length, 'key.length', 'must be 32');
   }
-  final bindings = ParticleBindings.instance;
-  final keyPtr = calloc<Uint8>(32);
-  try {
-    keyPtr.asTypedList(32).setAll(0, key);
-    final rc = bindings.livenessVerifyRaw(keyPtr, 32, rolling, nowUnix, skew);
-    if (rc < 0) {
-      throw ParticleCodeException('pc_liveness_verify failed ($rc)');
-    }
-    return rc == 1;
-  } finally {
-    calloc.free(keyPtr);
-  }
+  ParticleCode.checkInitialized();
+  return rust_liveness.livenessVerify(
+    key: key,
+    rolling: rolling,
+    nowUnix: nowUnix,
+    skew: skew,
+  );
 }

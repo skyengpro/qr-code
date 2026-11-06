@@ -11,7 +11,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  ffi: ^2.1.4
   # Must equal flutter_rust_bridge_codegen and the Rust crate (see flutter_rust_bridge.yaml).
   flutter_rust_bridge: 2.13.0
   freezed_annotation: ^3.1.0
