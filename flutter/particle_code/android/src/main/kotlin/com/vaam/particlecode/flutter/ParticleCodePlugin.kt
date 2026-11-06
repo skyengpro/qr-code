@@ -16,12 +16,12 @@ import io.flutter.plugin.common.PluginRegistry
 /**
  * Android side of the `particle_code` plugin (contract: `flutter/particle_code/PROTOCOL.md`).
  *
- * * `particle_code/scanner` (methods): camera permission, start, stop, reset, torch.
- * * `particle_code/scan_events` (events): progress, segments and the final payload.
+ * * `particle_code/scanner` (methods): camera permission, start, stop, torch, releaseFrame.
+ * * `particle_code/camera_frames` (events): camera frames by plane address, for the Dart decoder.
  * * `particle_code/display` (methods): full brightness and screen-on while a code is shown.
  * * `particle_code/preview` (platform view): a CameraX `PreviewView`.
  *
- * Camera frames stay on the native side; see [ScannerSession].
+ * No decoder and no Rust here; see [ScannerSession] and [FrameStore].
  */
 class ParticleCodePlugin :
     FlutterPlugin,
@@ -32,7 +32,8 @@ class ParticleCodePlugin :
     private var displayChannel: MethodChannel? = null
     private var eventChannel: EventChannel? = null
 
-    private val events = ScanEvents()
+    private val events = CameraEvents()
+    private val frames = FrameStore()
     private val previews = PreviewRegistry()
     private val display = DisplayController()
 
@@ -70,6 +71,7 @@ class ParticleCodePlugin :
         previews.onTap = null
         previews.clear()
         events.release()
+        frames.releaseAll()
     }
 
     // endregion
@@ -176,16 +178,28 @@ class ParticleCodePlugin :
                     return
                 }
                 val torch = call.argument<Boolean>("torch") ?: false
-                val s = session ?: ScannerSession(a, events, previews).also { session = it }
+                val existing = session
+                val s = if (existing != null) {
+                    existing
+                } else {
+                    // A new session: a frame held from the previous one is stale.
+                    frames.releaseAll()
+                    ScannerSession(a, events, previews, frames).also { session = it }
+                }
                 s.start(torch, result)
             }
             "stop" -> {
                 stopSession()
                 result.success(null)
             }
-            "reset" -> {
-                session?.reset()
-                result.success(null)
+            "releaseFrame" -> {
+                val id = (call.argument<Any>("id") as? Number)?.toLong()
+                if (id == null) {
+                    result.error("bad_arguments", "releaseFrame needs {\"id\": int}", null)
+                } else {
+                    frames.release(id)
+                    result.success(null)
+                }
             }
             "setTorch" -> {
                 val on = call.argument<Boolean>("on")
@@ -219,7 +233,7 @@ class ParticleCodePlugin :
     private companion object {
         const val SCANNER_CHANNEL = "particle_code/scanner"
         const val DISPLAY_CHANNEL = "particle_code/display"
-        const val EVENT_CHANNEL = "particle_code/scan_events"
+        const val EVENT_CHANNEL = "particle_code/camera_frames"
         const val PREVIEW_VIEW_TYPE = "particle_code/preview"
 
         /** Must fit in 16 bits (ActivityCompat). */
