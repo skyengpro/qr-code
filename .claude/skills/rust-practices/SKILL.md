@@ -13,7 +13,7 @@ description: Rust coding conventions for this workspace — error handling, no_s
 | `particlecode-vision` | core | The only crate that reads pixels. No rendering. |
 | `particlecode-render` | core, tiny-skia, png, gif | The only crate that writes pixels. |
 | `particlecode-shapes` / `-cli` | everything | Binaries; `anyhow` allowed here and only here. |
-| `particlecode-ffi` | core, vision | Only crate allowed `unsafe` (C ABI). Every `unsafe` block gets a `// SAFETY:` comment. |
+| `particlecode-ffi` | core, vision | Only crate allowed `unsafe` (`feed_camera_frame` reads camera planes by address; generated frb code). Every `unsafe` block gets a `// SAFETY:` comment. |
 
 Never introduce a dependency cycle; tests that need rendering use `particlecode-render` as a
 **dev-dependency**.

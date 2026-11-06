@@ -1,8 +1,8 @@
 # Particle Code
 
 Aesthetic dense optical code: COSE/CBOR payloads move from a phone screen to a phone
-camera as an animated field of colored dots. Rust workspace; the Flutter and Tauri apps
-consume it through `particlecode-ffi`.
+camera as an animated field of colored dots. Rust workspace; the Flutter plugin
+(`flutter/particle_code`) consumes it through `particlecode-ffi` and flutter_rust_bridge only.
 
 * Product spec: `docs/spec.md`. Implementation decisions and spec corrections:
   `docs/design.md`. Read both before changing the format.
@@ -18,8 +18,8 @@ crates/particlecode-vision   camera image -> header + symbols (locate, read)
 crates/particlecode-render   FrameSpec -> pixels (tiny-skia), PNG/GIF/SVG packagers, synthetic degradations
 crates/particlecode-shapes   shape tool (SVG path -> lattice bitmaps, checks, validate, shapes.bin)
 crates/particlecode-cli      `particlecode` binary + examples/
-crates/particlecode-ffi      flutter_rust_bridge-style API + C ABI
-crates/particlecode-wasm     browser sender: ParticleCanvas.tick -> RGBA for a <canvas> (wasm-bindgen)
+crates/particlecode-ffi      flutter_rust_bridge API (generated: src/frb_generated.rs); built by the plugin's hook
+flutter/particle_code        Flutter plugin: Dart sender + scanner, native camera, hook/build.dart (Native Assets)
 examples/                    runnable end-to-end examples (see examples/README.md)
 docs/                        spec, design notes, README images
 ```
@@ -35,4 +35,6 @@ cargo fmt --all --check && cargo lint && cargo t && cargo deny check
 * Geometry only from `particlecode_core::layout`. Palette only from `profile::colors`.
 * Core stays `no_std`; check with `cargo build -p particlecode-core --no-default-features`.
 * Decoders never panic on input; they reject.
+* Rust reaches Flutter only through flutter_rust_bridge. After changing `particlecode-ffi/src/api`,
+  run `flutter_rust_bridge_codegen generate` in `flutter/particle_code` and commit the output.
 * Format changes bump `FORMAT_VERSION` / `SHAPE_TABLE_VERSION` and update `docs/design.md`.
