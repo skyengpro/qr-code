@@ -58,7 +58,7 @@ void main() {
       final png = await image.toByteData(format: ui.ImageByteFormat.png);
       final out =
           Platform.environment['SCREENSHOT_OUT'] ??
-          '../../../docs/images/flutter_send.png';
+          '../../docs/images/flutter_send.png';
       File(out).writeAsBytesSync(png!.buffer.asUint8List());
     });
   });

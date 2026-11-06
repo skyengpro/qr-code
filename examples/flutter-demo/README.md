@@ -1,6 +1,6 @@
-# particle_code example
+# Particle Code Flutter demo
 
-Sender and scanner demo for the [`particle_code`](../README.md) plugin (Android and iOS).
+Sender and scanner demo for the [`particle_code`](../../flutter/particle_code/README.md) plugin (Android and iOS).
 
 * **Send** tab: pick a payload (a ~200 byte ticket, a ~6 KB credential, or free text), a
   profile (S, M, L), a shape (disc, heart, rounded square, hexagon, ring, a letter) and a mood
@@ -10,12 +10,12 @@ Sender and scanner demo for the [`particle_code`](../README.md) plugin (Android 
   hint, bytes received so far, a progress ring and a torch toggle. A finished scan opens a
   result sheet (size, hex, text if it is UTF-8, liveness) with **Scan again**.
 
-![Send tab](../../../docs/images/flutter_send.png)
+![Send tab](../../docs/images/flutter_send.png)
 
 ## Run it
 
 ```sh
-cd flutter/particle_code/example
+cd examples/flutter-demo
 flutter run            # on a phone: the simulator and emulator have no camera
 ```
 

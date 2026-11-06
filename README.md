@@ -83,8 +83,8 @@ crates/particlecode-render   FrameSpec -> pixels (tiny-skia): PNG, animated GIF,
 crates/particlecode-shapes   shape tool: SVG path -> lattice bitmaps, rule checks, synthetic validation, shapes.bin
 crates/particlecode-cli      the `particlecode` command
 crates/particlecode-ffi      the plugin's Rust side: flutter_rust_bridge API (encoder, decoder over camera frames)
-flutter/particle_code/       Flutter plugin for Android and iOS (Rust built by a Native Assets hook) + example app
-examples/                    runnable examples and sample CBOR payloads
+flutter/particle_code/       Flutter plugin for Android and iOS (Rust built by a Native Assets hook)
+examples/                    Rust examples, sample CBOR payloads, flutter-demo/ (the Flutter demo app)
 fuzz/                        cargo-fuzz target for the header decoder
 ```
 
@@ -145,7 +145,7 @@ only way an app uses Particle Code. Dart reaches Rust through
   app is built for and bundles it. `flutter run` and `flutter build` just work once `rustup` is
   installed; there is no prebuilt binary and no build script.
 
-<img src="docs/images/flutter_send.png" alt="The example app's Send tab showing a heart-shaped code" width="260">
+<img src="docs/images/flutter_send.png" alt="The demo app's Send tab showing a heart-shaped code" width="260">
 
 ```dart
 import 'package:particle_code/particle_code.dart';
@@ -171,7 +171,7 @@ if (await scanner.requestPermission()) await scanner.start();
 
 See the [plugin README](flutter/particle_code/README.md) and
 [`PROTOCOL.md`](flutter/particle_code/PROTOCOL.md) (the native/Dart frame handoff). The
-[example app](flutter/particle_code/example) has a Send tab (sample ticket and credential or free
+[demo app](examples/flutter-demo) has a Send tab (sample ticket and credential or free
 text, profile, shape, mood) and a Scan tab (camera, progress, result sheet), and
 `.github/workflows/flutter.yml` builds it for Android and iOS on every pull request.
 

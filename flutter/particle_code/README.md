@@ -13,7 +13,8 @@ and the plugin builds the Rust library itself (Native Assets): add the dependenc
   to Dart by address; the Rust decoder reads it in place on a worker thread, and Dart turns
   the results into scan events. Pixels are never copied.
 
-The contract between the Dart and native sides is in [`PROTOCOL.md`](PROTOCOL.md).
+The contract between the Dart and native sides is in [`PROTOCOL.md`](PROTOCOL.md). A demo app
+lives in [`examples/flutter-demo`](../../examples/flutter-demo).
 
 ## Show a code
 

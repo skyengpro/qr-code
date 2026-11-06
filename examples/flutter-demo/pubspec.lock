@@ -214,7 +214,7 @@ packages:
   particle_code:
     dependency: "direct main"
     description:
-      path: ".."
+      path: "../../flutter/particle_code"
       relative: true
     source: path
     version: "0.2.0"

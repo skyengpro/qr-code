@@ -1,13 +1,13 @@
 name: Flutter
 
-# The particle_code Flutter plugin (flutter/particle_code) and its example app.
+# The particle_code Flutter plugin (flutter/particle_code) and the demo app (examples/flutter-demo).
 #
-#   dart     analyze + test the plugin and the example (the Native Assets hook builds the
+#   dart     analyze + test the plugin and the demo (the Native Assets hook builds the
 #            Rust library for the host)
 #   codegen  the committed flutter_rust_bridge bindings equal what the generator produces
-#   android  build the example APK; it must carry the Rust library (built by the hook) and the
+#   android  build the demo APK; it must carry the Rust library (built by the hook) and the
 #            plugin's JNI address helper for every ABI
-#   ios      build the example app for a device (no codesign) through SwiftPM and through
+#   ios      build the demo app for a device (no codesign) through SwiftPM and through
 #            CocoaPods; it must embed the Rust library as particlecode_ffi.framework
 #
 # The hook runs `rustup`, which installs the toolchain and targets pinned in
@@ -53,16 +53,16 @@ jobs:
         working-directory: flutter/particle_code
         run: flutter test
 
-      - name: Example, flutter pub get
-        working-directory: flutter/particle_code/example
+      - name: Demo, flutter pub get
+        working-directory: examples/flutter-demo
         run: flutter pub get
 
-      - name: Example, flutter analyze
-        working-directory: flutter/particle_code/example
+      - name: Demo, flutter analyze
+        working-directory: examples/flutter-demo
         run: flutter analyze
 
-      - name: Example, flutter test
-        working-directory: flutter/particle_code/example
+      - name: Demo, flutter test
+        working-directory: examples/flutter-demo
         run: flutter test
 
   # The Dart and Rust sides of the bridge are generated from crates/particlecode-ffi/src/api.
@@ -131,17 +131,17 @@ jobs:
           cache: true
 
       - name: flutter pub get
-        working-directory: flutter/particle_code/example
+        working-directory: examples/flutter-demo
         run: flutter pub get
 
       # ubuntu-latest ships the Android SDK and NDK; the hook links the Rust library with the
       # NDK that Flutter hands it.
       - name: flutter build apk --debug
-        working-directory: flutter/particle_code/example
+        working-directory: examples/flutter-demo
         run: flutter build apk --debug
 
       - name: The APK carries both native libraries for every ABI
-        working-directory: flutter/particle_code/example
+        working-directory: examples/flutter-demo
         run: |
           set -euo pipefail
           apk=build/app/outputs/flutter-apk/app-debug.apk
@@ -158,7 +158,7 @@ jobs:
       # The CAMERA permission comes from the plugin's manifest, not the app's, so this
       # checks the manifest merge. aapt2 ships with the SDK build tools on the runner.
       - name: The merged manifest asks for the camera and targets minSdk 24
-        working-directory: flutter/particle_code/example
+        working-directory: examples/flutter-demo
         run: |
           set -euo pipefail
           apk="$PWD/build/app/outputs/flutter-apk/app-debug.apk"
@@ -176,8 +176,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
-          name: particle-code-example-debug-apk
-          path: flutter/particle_code/example/build/app/outputs/flutter-apk/app-debug.apk
+          name: particle-code-flutter-demo-debug-apk
+          path: examples/flutter-demo/build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
           retention-days: 7
 
@@ -194,14 +194,14 @@ jobs:
           cache: true
 
       - name: flutter pub get
-        working-directory: flutter/particle_code/example
+        working-directory: examples/flutter-demo
         run: flutter pub get
 
       # Device builds without signing. First through Swift Package Manager (the plugin's
       # ios/particle_code/Package.swift), then through CocoaPods (the podspec). Release builds
       # strip and dead-strip, which must leave the bundled Rust framework alone.
       - name: "SwiftPM: flutter build ios --release --no-codesign"
-        working-directory: flutter/particle_code/example
+        working-directory: examples/flutter-demo
         run: |
           set -euo pipefail
           flutter config --enable-swift-package-manager
@@ -214,10 +214,10 @@ jobs:
             || { echo "Runner has no SwiftPM plugin integration"; exit 1; }
 
       - name: "SwiftPM: the app embeds the Rust library and it exports the bridge"
-        working-directory: flutter/particle_code/example
-        run: ../tool/check_ios_app.sh build/ios/iphoneos/Runner.app
+        working-directory: examples/flutter-demo
+        run: ../../flutter/particle_code/tool/check_ios_app.sh build/ios/iphoneos/Runner.app
 
-      # The podspec must keep working for apps that have not moved to SwiftPM. The example's
+      # The podspec must keep working for apps that have not moved to SwiftPM. The demo's
       # project carries SwiftPM integration (Flutter 3.47 creates projects with it), so this
       # builds a fresh app created with SwiftPM disabled, the way a CocoaPods-based consumer
       # looks, and checks it the same way.

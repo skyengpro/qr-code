@@ -11,7 +11,7 @@ dependencies:
   flutter:
     sdk: flutter
   particle_code:
-    path: ../
+    path: ../../flutter/particle_code
 
 dev_dependencies:
   flutter_test:
