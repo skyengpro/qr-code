@@ -64,7 +64,8 @@ Listening does not start the camera; `start` does. Each event is a `Map<String, 
  "timestampNanos": int,                 // capture time of the frame, in timestampClock
  "timestampClock": String,              // "android_realtime" | "android_unknown" | "ios_host"
  "receivedNanos": int,                  // native monotonic time the plugin got the frame
- "skippedBefore": int}                  // frames closed unsent since the previous event
+ "skippedBefore": int,                  // frames closed unsent since the previous event
+ "droppedByOutputBefore": int?}         // iOS only: didDrop callbacks since the previous event
 
 {"type": "error", "code": String, "message": String}   // camera failures after start
 ```
@@ -134,6 +135,9 @@ plugin closed unsent because a frame was in flight, since the previous `frame` e
 the camera pipeline dropped before delivery (CameraX `KEEP_ONLY_LATEST`,
 `alwaysDiscardsLateVideoFrames`) are not observable here; gaps between capture timestamps
 show them indirectly, and nothing infers drops from the rate-limited `ScanFrame` events.
+iOS additionally reports `droppedByOutputBefore`: frames AVFoundation itself reported as
+dropped (`captureOutput(_:didDrop:from:)`) since the previous event; Android has no
+equivalent callback and omits it.
 
 ## Dart scanner events
 
