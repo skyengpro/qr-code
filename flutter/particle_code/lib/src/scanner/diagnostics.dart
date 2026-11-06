@@ -80,7 +80,8 @@ class CameraBufferInfo {
   /// Buffer size in pixels, sensor orientation.
   final int width, height;
 
-  /// Pixel format as the platform names it (`YUV_420_888`, `420YpCbCr8BiPlanarFullRange`).
+  /// Pixel format as the platform names it (`YUV_420_888`, `420YpCbCr8BiPlanarFullRange`);
+  /// `unknown` when the native side does not report it.
   final String format;
 
   /// Row and chroma strides in bytes; chroma pixel stride (2 interleaved, 1 planar).

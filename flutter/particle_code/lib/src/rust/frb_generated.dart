@@ -1684,13 +1684,37 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  PacketDto dco_decode_box_autoadd_packet_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_packet_dto(raw);
+  }
+
+  @protected
   ProfileDto dco_decode_box_autoadd_profile_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_profile_dto(raw);
   }
 
   @protected
+  RejectCategoryDto dco_decode_box_autoadd_reject_category_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_reject_category_dto(raw);
+  }
+
+  @protected
+  RejectStageDto dco_decode_box_autoadd_reject_stage_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_reject_stage_dto(raw);
+  }
+
+  @protected
   int dco_decode_box_autoadd_u_16(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
+  }
+
+  @protected
+  int dco_decode_box_autoadd_u_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
   }
@@ -1719,6 +1743,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       yStride: dco_decode_u_32(arr[8]),
       uvStride: dco_decode_u_32(arr[9]),
       uvPixelStride: dco_decode_u_32(arr[10]),
+    );
+  }
+
+  @protected
+  DecodeTimingsDto dco_decode_decode_timings_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return DecodeTimingsDto(
+      validateUs: dco_decode_opt_box_autoadd_u_32(arr[0]),
+      locateUs: dco_decode_opt_box_autoadd_u_32(arr[1]),
+      readUs: dco_decode_opt_box_autoadd_u_32(arr[2]),
+      receiveUs: dco_decode_opt_box_autoadd_u_32(arr[3]),
+      totalUs: dco_decode_u_32(arr[4]),
     );
   }
 
@@ -1861,8 +1900,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   FrameResultDto dco_decode_frame_result_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 10)
-      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
+    if (arr.length != 14)
+      throw Exception('unexpected arr length: expect 14 but see ${arr.length}');
     return FrameResultDto(
       locked: dco_decode_bool(arr[0]),
       profile: dco_decode_opt_box_autoadd_profile_dto(arr[1]),
@@ -1874,6 +1913,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       rejectReason: dco_decode_opt_String(arr[7]),
       hint: dco_decode_opt_String(arr[8]),
       hintCode: dco_decode_hint_dto(arr[9]),
+      timings: dco_decode_decode_timings_dto(arr[10]),
+      rejectStage: dco_decode_opt_box_autoadd_reject_stage_dto(arr[11]),
+      rejectCategory: dco_decode_opt_box_autoadd_reject_category_dto(arr[12]),
+      packet: dco_decode_opt_box_autoadd_packet_dto(arr[13]),
     );
   }
 
@@ -2030,15 +2073,41 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  PacketDto? dco_decode_opt_box_autoadd_packet_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_packet_dto(raw);
+  }
+
+  @protected
   ProfileDto? dco_decode_opt_box_autoadd_profile_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_profile_dto(raw);
   }
 
   @protected
+  RejectCategoryDto? dco_decode_opt_box_autoadd_reject_category_dto(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_reject_category_dto(raw);
+  }
+
+  @protected
+  RejectStageDto? dco_decode_opt_box_autoadd_reject_stage_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_reject_stage_dto(raw);
+  }
+
+  @protected
   int? dco_decode_opt_box_autoadd_u_16(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_u_16(raw);
+  }
+
+  @protected
+  int? dco_decode_opt_box_autoadd_u_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_u_32(raw);
   }
 
   @protected
@@ -2051,6 +2120,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_list_prim_u_8_strict(raw);
+  }
+
+  @protected
+  PacketDto dco_decode_packet_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return PacketDto(
+      segmentIndex: dco_decode_u_16(arr[0]),
+      packetSeed: dco_decode_u_16(arr[1]),
+      distinct: dco_decode_bool(arr[2]),
+    );
   }
 
   @protected
@@ -2128,6 +2210,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       default:
         throw Exception("unreachable");
     }
+  }
+
+  @protected
+  RejectCategoryDto dco_decode_reject_category_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return RejectCategoryDto.values[raw as int];
+  }
+
+  @protected
+  RejectStageDto dco_decode_reject_stage_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return RejectStageDto.values[raw as int];
   }
 
   @protected
@@ -2387,15 +2481,43 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  PacketDto sse_decode_box_autoadd_packet_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_packet_dto(deserializer));
+  }
+
+  @protected
   ProfileDto sse_decode_box_autoadd_profile_dto(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_profile_dto(deserializer));
   }
 
   @protected
+  RejectCategoryDto sse_decode_box_autoadd_reject_category_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_reject_category_dto(deserializer));
+  }
+
+  @protected
+  RejectStageDto sse_decode_box_autoadd_reject_stage_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_reject_stage_dto(deserializer));
+  }
+
+  @protected
   int sse_decode_box_autoadd_u_16(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_u_16(deserializer));
+  }
+
+  @protected
+  int sse_decode_box_autoadd_u_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_u_32(deserializer));
   }
 
   @protected
@@ -2430,6 +2552,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       yStride: var_yStride,
       uvStride: var_uvStride,
       uvPixelStride: var_uvPixelStride,
+    );
+  }
+
+  @protected
+  DecodeTimingsDto sse_decode_decode_timings_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    final var_validateUs = sse_decode_opt_box_autoadd_u_32(deserializer);
+    final var_locateUs = sse_decode_opt_box_autoadd_u_32(deserializer);
+    final var_readUs = sse_decode_opt_box_autoadd_u_32(deserializer);
+    final var_receiveUs = sse_decode_opt_box_autoadd_u_32(deserializer);
+    final var_totalUs = sse_decode_u_32(deserializer);
+    return DecodeTimingsDto(
+      validateUs: var_validateUs,
+      locateUs: var_locateUs,
+      readUs: var_readUs,
+      receiveUs: var_receiveUs,
+      totalUs: var_totalUs,
     );
   }
 
@@ -2630,6 +2769,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     final var_rejectReason = sse_decode_opt_String(deserializer);
     final var_hint = sse_decode_opt_String(deserializer);
     final var_hintCode = sse_decode_hint_dto(deserializer);
+    final var_timings = sse_decode_decode_timings_dto(deserializer);
+    final var_rejectStage = sse_decode_opt_box_autoadd_reject_stage_dto(
+      deserializer,
+    );
+    final var_rejectCategory = sse_decode_opt_box_autoadd_reject_category_dto(
+      deserializer,
+    );
+    final var_packet = sse_decode_opt_box_autoadd_packet_dto(deserializer);
     return FrameResultDto(
       locked: var_locked,
       profile: var_profile,
@@ -2641,6 +2788,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       rejectReason: var_rejectReason,
       hint: var_hint,
       hintCode: var_hintCode,
+      timings: var_timings,
+      rejectStage: var_rejectStage,
+      rejectCategory: var_rejectCategory,
+      packet: var_packet,
     );
   }
 
@@ -2854,6 +3005,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  PacketDto? sse_decode_opt_box_autoadd_packet_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_packet_dto(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   ProfileDto? sse_decode_opt_box_autoadd_profile_dto(
     SseDeserializer deserializer,
   ) {
@@ -2867,11 +3031,48 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  RejectCategoryDto? sse_decode_opt_box_autoadd_reject_category_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_reject_category_dto(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  RejectStageDto? sse_decode_opt_box_autoadd_reject_stage_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_reject_stage_dto(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   int? sse_decode_opt_box_autoadd_u_16(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_u_16(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_u_32(deserializer));
     } else {
       return null;
     }
@@ -2897,6 +3098,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     } else {
       return null;
     }
+  }
+
+  @protected
+  PacketDto sse_decode_packet_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    final var_segmentIndex = sse_decode_u_16(deserializer);
+    final var_packetSeed = sse_decode_u_16(deserializer);
+    final var_distinct = sse_decode_bool(deserializer);
+    return PacketDto(
+      segmentIndex: var_segmentIndex,
+      packetSeed: var_packetSeed,
+      distinct: var_distinct,
+    );
   }
 
   @protected
@@ -2975,6 +3189,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       default:
         throw UnimplementedError('');
     }
+  }
+
+  @protected
+  RejectCategoryDto sse_decode_reject_category_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    final inner = sse_decode_i_32(deserializer);
+    return RejectCategoryDto.values[inner];
+  }
+
+  @protected
+  RejectStageDto sse_decode_reject_stage_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    final inner = sse_decode_i_32(deserializer);
+    return RejectStageDto.values[inner];
   }
 
   @protected
@@ -3239,6 +3469,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_packet_dto(
+    PacketDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_packet_dto(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_profile_dto(
     ProfileDto self,
     SseSerializer serializer,
@@ -3248,9 +3487,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_reject_category_dto(
+    RejectCategoryDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_reject_category_dto(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_reject_stage_dto(
+    RejectStageDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_reject_stage_dto(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_u_16(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_u_16(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self, serializer);
   }
 
   @protected
@@ -3276,6 +3539,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_32(self.yStride, serializer);
     sse_encode_u_32(self.uvStride, serializer);
     sse_encode_u_32(self.uvPixelStride, serializer);
+  }
+
+  @protected
+  void sse_encode_decode_timings_dto(
+    DecodeTimingsDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_opt_box_autoadd_u_32(self.validateUs, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.locateUs, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.readUs, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.receiveUs, serializer);
+    sse_encode_u_32(self.totalUs, serializer);
   }
 
   @protected
@@ -3409,6 +3685,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.rejectReason, serializer);
     sse_encode_opt_String(self.hint, serializer);
     sse_encode_hint_dto(self.hintCode, serializer);
+    sse_encode_decode_timings_dto(self.timings, serializer);
+    sse_encode_opt_box_autoadd_reject_stage_dto(self.rejectStage, serializer);
+    sse_encode_opt_box_autoadd_reject_category_dto(
+      self.rejectCategory,
+      serializer,
+    );
+    sse_encode_opt_box_autoadd_packet_dto(self.packet, serializer);
   }
 
   @protected
@@ -3621,6 +3904,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_packet_dto(
+    PacketDto? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_packet_dto(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_profile_dto(
     ProfileDto? self,
     SseSerializer serializer,
@@ -3634,12 +3930,48 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_reject_category_dto(
+    RejectCategoryDto? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_reject_category_dto(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_reject_stage_dto(
+    RejectStageDto? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_reject_stage_dto(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_u_16(int? self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_u_16(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_u_32(self, serializer);
     }
   }
 
@@ -3664,6 +3996,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     if (self != null) {
       sse_encode_list_prim_u_8_strict(self, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_packet_dto(PacketDto self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_16(self.segmentIndex, serializer);
+    sse_encode_u_16(self.packetSeed, serializer);
+    sse_encode_bool(self.distinct, serializer);
   }
 
   @protected
@@ -3729,6 +4069,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_i_32(2, serializer);
         sse_encode_list_prim_u_8_strict(payload, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_reject_category_dto(
+    RejectCategoryDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_reject_stage_dto(
+    RejectStageDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected

@@ -9,7 +9,7 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'dto.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `from_dots`, `rejected_because`, `rejected`, `session_config`, `text`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 
 /// The palette every painter must draw with.
 PaletteDto palette() => RustLib.instance.api.crateApiDtoPalette();
@@ -148,6 +148,53 @@ class CameraFrameDto {
           yStride == other.yStride &&
           uvStride == other.uvStride &&
           uvPixelStride == other.uvPixelStride;
+}
+
+/// Wall-clock durations of the decoder stages of one `feed_*` call, in microseconds. A stage
+/// that did not run is `None`.
+class DecodeTimingsDto {
+  /// Checking and preparing the input buffers (plane checks, chroma de-interleave,
+  /// RGBA to YUV).
+  final int? validateUs;
+
+  /// Finding the anchors.
+  final int? locateUs;
+
+  /// Reading the header and the body dots.
+  final int? readUs;
+
+  /// The receiver: Reed-Solomon, fountain decoding.
+  final int? receiveUs;
+
+  /// The whole call, including time between stages.
+  final int totalUs;
+
+  const DecodeTimingsDto({
+    this.validateUs,
+    this.locateUs,
+    this.readUs,
+    this.receiveUs,
+    required this.totalUs,
+  });
+
+  @override
+  int get hashCode =>
+      validateUs.hashCode ^
+      locateUs.hashCode ^
+      readUs.hashCode ^
+      receiveUs.hashCode ^
+      totalUs.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DecodeTimingsDto &&
+          runtimeType == other.runtimeType &&
+          validateUs == other.validateUs &&
+          locateUs == other.locateUs &&
+          readUs == other.readUs &&
+          receiveUs == other.receiveUs &&
+          totalUs == other.totalUs;
 }
 
 /// Physical display information used to pick a profile. Mirrors [`DisplayInfo`].
@@ -619,6 +666,18 @@ class FrameResultDto {
   /// `hint` as a code, for localized UI text. `None` exactly when `hint` is `None`.
   final HintDto hintCode;
 
+  /// How long the stages of this call took (`std::time::Instant` inside Rust).
+  final DecodeTimingsDto timings;
+
+  /// The pipeline stage that rejected the frame, `None` when the receiver accepted it.
+  final RejectStageDto? rejectStage;
+
+  /// Machine-readable cause of the rejection, `None` exactly when `reject_stage` is.
+  final RejectCategoryDto? rejectCategory;
+
+  /// The packet the frame carried, once its header was read and it reached the receiver.
+  final PacketDto? packet;
+
   const FrameResultDto({
     required this.locked,
     this.profile,
@@ -630,6 +689,10 @@ class FrameResultDto {
     this.rejectReason,
     this.hint,
     required this.hintCode,
+    required this.timings,
+    this.rejectStage,
+    this.rejectCategory,
+    this.packet,
   });
 
   @override
@@ -643,7 +706,11 @@ class FrameResultDto {
       progress.hashCode ^
       rejectReason.hashCode ^
       hint.hashCode ^
-      hintCode.hashCode;
+      hintCode.hashCode ^
+      timings.hashCode ^
+      rejectStage.hashCode ^
+      rejectCategory.hashCode ^
+      packet.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -659,7 +726,11 @@ class FrameResultDto {
           progress == other.progress &&
           rejectReason == other.rejectReason &&
           hint == other.hint &&
-          hintCode == other.hintCode;
+          hintCode == other.hintCode &&
+          timings == other.timings &&
+          rejectStage == other.rejectStage &&
+          rejectCategory == other.rejectCategory &&
+          packet == other.packet;
 }
 
 /// What the person holding the phone should do; the code behind
@@ -725,6 +796,37 @@ sealed class LivenessDto with _$LivenessDto {
     /// Whether `seed_low` matches the decoded header's packet seed.
     required bool consistent,
   }) = LivenessDto_Read;
+}
+
+/// The packet a camera frame carried.
+class PacketDto {
+  /// Segment the packet belongs to (header field).
+  final int segmentIndex;
+
+  /// Fountain symbol id within the segment (header field).
+  final int packetSeed;
+
+  /// Whether the receiver had not stored this packet before (a new distinct symbol).
+  final bool distinct;
+
+  const PacketDto({
+    required this.segmentIndex,
+    required this.packetSeed,
+    required this.distinct,
+  });
+
+  @override
+  int get hashCode =>
+      segmentIndex.hashCode ^ packetSeed.hashCode ^ distinct.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PacketDto &&
+          runtimeType == other.runtimeType &&
+          segmentIndex == other.segmentIndex &&
+          packetSeed == other.packetSeed &&
+          distinct == other.distinct;
 }
 
 /// The exact palette of [`particlecode_core::profile::colors`].
@@ -842,6 +944,84 @@ sealed class ProgressDto with _$ProgressDto {
     /// The payload.
     required Uint8List payload,
   }) = ProgressDto_Done;
+}
+
+/// Why a frame was rejected, one variant per vision and decode error.
+enum RejectCategoryDto {
+  /// Buffers inconsistent with the stated dimensions and strides.
+  invalidBuffers,
+
+  /// No anchors found.
+  noLock,
+
+  /// Part of the code is outside the image.
+  truncated,
+
+  /// The homography does not explain the anchors (false lock or distortion).
+  residual,
+
+  /// The calibration hues overlap (dark, glare, color cast).
+  lighting,
+
+  /// The header profile differs from the anchor geometry.
+  profileMismatch,
+
+  /// The shape id is not in the table.
+  unknownShape,
+
+  /// Header magic mismatch.
+  badMagic,
+
+  /// Header CRC-8 mismatch.
+  badHeaderCrc,
+
+  /// Reed-Solomon could not correct the header or body.
+  uncorrectable,
+
+  /// Packet CRC-32 mismatch.
+  packetCrc,
+
+  /// Unsupported format version.
+  unsupportedVersion,
+
+  /// Shape table version mismatch.
+  shapeTableMismatch,
+
+  /// Reserved profile code.
+  badProfile,
+
+  /// Reserved palette.
+  unsupportedPalette,
+
+  /// Wrong symbol count for the profile and shape.
+  wrongSymbolCount,
+
+  /// Packet of another session.
+  otherSession,
+
+  /// Header fields inconsistent with the session.
+  inconsistent,
+
+  /// A completed segment failed its CRC-32.
+  segmentCrc,
+
+  /// The reassembled payload failed its CRC-32.
+  payloadCrc,
+}
+
+/// The decoder stage that rejected a frame.
+enum RejectStageDto {
+  /// Plane addresses, lengths or strides did not fit the dimensions.
+  buffers,
+
+  /// No code found.
+  locate,
+
+  /// Code found but header or symbols unreadable.
+  read,
+
+  /// The receiver refused the packet.
+  receiver,
 }
 
 /// An sRGB color. Painters must use these exact values: no color management, no filters.

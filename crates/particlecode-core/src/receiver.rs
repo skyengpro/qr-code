@@ -97,6 +97,8 @@ struct Locked {
     assembled: Vec<u8>,
     /// Bytes of the payload already returned by [`PacketReceiver::take_ready`].
     taken: usize,
+    /// Distinct packets stored so far (a packet counts once per segment and seed).
+    distinct: u32,
     done: bool,
 }
 
@@ -120,6 +122,13 @@ impl PacketReceiver {
     /// Session id of the transfer being received, once locked.
     pub fn session_id(&self) -> Option<u16> {
         self.state.as_ref().map(|s| s.first.session_id)
+    }
+
+    /// Number of distinct packets stored since the session was locked (0 before). A packet
+    /// whose segment seed was seen before, or whose segment is already decoded, does not
+    /// count: compare the value before and after a feed to learn whether it was new.
+    pub fn distinct_packets(&self) -> u32 {
+        self.state.as_ref().map_or(0, |s| s.distinct)
     }
 
     /// The first header seen (the transfer's parameters), once locked.
@@ -240,6 +249,7 @@ impl Locked {
             next: 0,
             assembled: Vec::new(),
             taken: 0,
+            distinct: 0,
             done: false,
         })
     }
@@ -281,6 +291,7 @@ impl Locked {
         if !seen.insert(h.packet_seed) {
             return Ok(()); // duplicate
         }
+        self.distinct += 1;
         let decoder = decoder.get_or_insert_with(|| {
             let len = u64::from(k) * self.block_size as u64;
             Box::new(SourceBlockDecoder::new(
@@ -657,6 +668,29 @@ mod tests {
                 segments_total: 3
             }
         );
+    }
+
+    #[test]
+    fn distinct_packets_counts_new_symbols_only() {
+        let data = payload(20_000);
+        let s = session(&data, 1250, 5);
+        let mut rx = PacketReceiver::new();
+        assert_eq!(rx.distinct_packets(), 0);
+        let (h, sym) = s.packet(0);
+        rx.push(&h, &sym);
+        assert_eq!(rx.distinct_packets(), 1);
+        rx.push(&h, &sym); // repeated frame
+        assert_eq!(rx.distinct_packets(), 1);
+        for i in 1..7 {
+            let (h, sym) = s.packet(i);
+            rx.push(&h, &sym);
+        }
+        assert_eq!(rx.distinct_packets(), 7);
+        let (h, sym) = s.packet(7); // repair symbol of an already decoded segment
+        rx.push(&h, &sym);
+        assert_eq!(rx.distinct_packets(), 7);
+        rx.reset();
+        assert_eq!(rx.distinct_packets(), 0);
     }
 
     #[test]

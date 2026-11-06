@@ -42,11 +42,13 @@ class ParticleScanner {
     EventChannel? framesChannel,
     @visibleForTesting FrameDecoder Function()? decoderFactory,
     @visibleForTesting DateTime Function()? clock,
+    @visibleForTesting Stopwatch Function()? stopwatchFactory,
   }) : _method = methodChannel ?? channel,
        _framesChannel = framesChannel ?? ParticleScanner.framesChannel,
        _decoderFactory = decoderFactory ?? RustFrameDecoder.new,
        _customDecoder = decoderFactory != null,
-       _clock = clock ?? DateTime.now {
+       _clock = clock ?? DateTime.now,
+       _stopwatchFactory = stopwatchFactory ?? Stopwatch.new {
     _controller = StreamController<ScanEvent>.broadcast(onListen: _onListen);
   }
 
@@ -66,6 +68,7 @@ class ParticleScanner {
   final FrameDecoder Function() _decoderFactory;
   final bool _customDecoder;
   final DateTime Function() _clock;
+  final Stopwatch Function() _stopwatchFactory;
   late final StreamController<ScanEvent> _controller;
   final StreamController<ScanDiagnostic> _diagnostics =
       StreamController<ScanDiagnostic>.broadcast();
@@ -81,6 +84,13 @@ class ParticleScanner {
   bool _done = false;
   bool _stopping = false;
   Future<void>? _inFlight;
+
+  // Diagnostics: the Dart stopwatch of the current start() and what ScanCameraStarted needs.
+  Stopwatch _watch = Stopwatch();
+  bool _firstFrameSeen = false;
+  bool _startedEmitted = false;
+  Duration? _startup;
+  ({String? cameraId, String facing})? _startInfo;
 
   // Sticky across rejected frames.
   int _have = 0;
@@ -140,8 +150,15 @@ class ParticleScanner {
       onError: _onStreamError,
     );
     _active = true;
+    _watch = _stopwatchFactory()..start();
+    _firstFrameSeen = false;
+    _startedEmitted = false;
+    _startup = null;
+    _startInfo = null;
     try {
-      await _invoke<void>('start', {'torch': torch});
+      final result = await _invoke<Object?>('start', {'torch': torch});
+      _startInfo = _parseStartResult(result);
+      _maybeEmitStarted();
     } catch (_) {
       _active = false;
       unawaited(_cancelFrames());
@@ -294,14 +311,28 @@ class ParticleScanner {
   }
 
   void _onFrame(Map<Object?, Object?> map) {
+    final arrived = _watch.elapsed;
+    if (!_firstFrameSeen && _watch.isRunning) {
+      _firstFrameSeen = true;
+      _startup = arrived;
+    }
     final id = map['id'];
     if (id is! int) {
       _emit(const ScanError('malformed_event', 'camera frame without an id'));
       return;
     }
+    final record = _FrameRecord(id, arrived, map);
     // Defensive: native keeps one frame in flight, but never queue a second.
-    if (!_active || _done || _stopping || _inFlight != null) {
-      _release(id);
+    final skip = !_active || _stopping
+        ? FrameDisposition.skippedInactive
+        : _done
+        ? FrameDisposition.skippedDone
+        : _inFlight != null
+        ? FrameDisposition.skippedBusy
+        : null;
+    if (skip != null) {
+      record.disposition = skip;
+      _releaseAndReport(record);
       return;
     }
     final CameraFrameDto dto;
@@ -310,16 +341,19 @@ class ParticleScanner {
       dto = _frameDto(map);
       toPreview = _affine(map['toPreview']);
     } on FormatException catch (e) {
-      _release(id);
+      record.disposition = FrameDisposition.malformed;
+      _releaseAndReport(record);
       _emit(ScanError('malformed_event', e.message));
       return;
     }
     final decoder = _decoder;
     if (decoder == null) {
-      _release(id);
+      record.disposition = FrameDisposition.skippedInactive;
+      _releaseAndReport(record);
       return;
     }
-    final future = _process(id, decoder, _generation, dto, toPreview);
+    record.disposition = FrameDisposition.decoded;
+    final future = _process(record, decoder, _generation, dto, toPreview);
     _inFlight = future;
     unawaited(
       future.whenComplete(() {
@@ -329,36 +363,133 @@ class ParticleScanner {
   }
 
   Future<void> _process(
-    int id,
+    _FrameRecord record,
     FrameDecoder decoder,
     int generation,
     CameraFrameDto dto,
     List<double> toPreview,
   ) async {
     try {
-      final result = await decoder.feed(dto);
+      final before = _watch.elapsed;
+      final FrameResultDto result;
+      try {
+        result = await decoder.feed(dto);
+      } finally {
+        record.bridge = _watch.elapsed - before;
+      }
+      record.result = result;
       if (generation == _generation && !_disposed) {
-        _handleResult(decoder, result, toPreview);
+        record.current = true;
+        record.done = _handleResult(decoder, result, toPreview);
       }
     } catch (e, st) {
       // A bad frame is normal at first; a bridge failure is a bug worth a log.
       debugPrint('particle_code: decoding a frame failed: $e\n$st');
     } finally {
-      await _releaseAndWait(id);
+      record.held = await _releaseAndWait(record.id);
+      _emitFrameDiagnostics(record);
     }
   }
 
-  void _release(int id) => unawaited(_releaseAndWait(id));
+  /// Releases a frame that is not decoded and reports it once released.
+  void _releaseAndReport(_FrameRecord record) {
+    unawaited(
+      _releaseAndWait(record.id).then((held) {
+        record.held = held;
+        _emitFrameDiagnostics(record);
+      }),
+    );
+  }
 
-  Future<void> _releaseAndWait(int id) async {
+  /// Releases the frame; returns how long native held it, if it says.
+  Future<Duration?> _releaseAndWait(int id) async {
     try {
-      await _method.invokeMethod<void>('releaseFrame', {'id': id});
+      final result = await _method.invokeMethod<Object?>('releaseFrame', {
+        'id': id,
+      });
+      final nanos = result is Map ? result['heldNanos'] : null;
+      return nanos is int ? Duration(microseconds: nanos ~/ 1000) : null;
     } catch (_) {
       // The platform may be gone; nothing to release then.
+      return null;
     }
   }
 
-  void _handleResult(
+  // endregion
+
+  // region diagnostics
+
+  void _emitDiagnostic(ScanDiagnostic record) {
+    if (_diagnostics.isClosed || !_diagnostics.hasListener) return;
+    _diagnostics.add(record);
+  }
+
+  void _maybeEmitStarted() {
+    final startup = _startup;
+    final info = _startInfo;
+    if (_startedEmitted || startup == null || info == null) return;
+    _startedEmitted = true;
+    _emitDiagnostic(
+      ScanCameraStarted(
+        startup: startup,
+        cameraId: info.cameraId,
+        facing: info.facing,
+      ),
+    );
+  }
+
+  void _emitFrameDiagnostics(_FrameRecord r) {
+    if (_diagnostics.isClosed || !_diagnostics.hasListener) return;
+    _maybeEmitStarted();
+    final result = r.result;
+    final packet = result?.packet;
+    final m = r.map;
+    // Progress is the scanner's sticky state; a result dropped by reset() has none.
+    final progress = result == null || r.current;
+    final skipped = m['skippedBefore'];
+    _emitDiagnostic(
+      ScanFrameDiagnostics(
+        frameId: r.id,
+        disposition: r.disposition,
+        sinceStart: r.arrived,
+        buffer: _bufferInfo(m),
+        capture: _capture(m),
+        received: _received(m),
+        skippedBefore: skipped is int ? skipped : 0,
+        bridge: r.bridge,
+        decode: result == null ? null : _decodeTimings(result.timings),
+        held: r.held,
+        locked: result?.locked ?? false,
+        rejectStage: switch (result?.rejectStage) {
+          null => null,
+          RejectStageDto.buffers => RejectStage.buffers,
+          RejectStageDto.locate => RejectStage.locate,
+          RejectStageDto.read => RejectStage.read,
+          RejectStageDto.receiver => RejectStage.receiver,
+        },
+        rejectCategory: result?.rejectCategory?.name,
+        packet: packet == null
+            ? null
+            : PacketInfo(
+                segmentIndex: packet.segmentIndex,
+                packetSeed: packet.packetSeed,
+                distinct: packet.distinct,
+              ),
+        have: progress ? _have : null,
+        need: progress ? _need : null,
+        segmentsDone: progress ? _segmentsDone : null,
+        segmentsTotal: progress ? _segmentsTotal : null,
+        done: r.done,
+      ),
+    );
+  }
+
+  // endregion
+
+  // region camera frames (results)
+
+  /// Returns whether this frame completed the transfer.
+  bool _handleResult(
     FrameDecoder decoder,
     FrameResultDto result,
     List<double> toPreview,
@@ -403,6 +534,7 @@ class ParticleScanner {
       _done = true;
       _emit(ScanDone(donePayload, sessionId));
     }
+    return donePayload != null;
   }
 
   ScanFrame _scanFrame(
@@ -443,6 +575,90 @@ class ParticleScanner {
   }
 
   // endregion
+}
+
+/// What the scanner knows about one camera frame event, until its diagnostics are emitted.
+class _FrameRecord {
+  _FrameRecord(this.id, this.arrived, this.map);
+
+  final int id;
+  final Duration arrived;
+  final Map<Object?, Object?> map;
+  FrameDisposition disposition = FrameDisposition.malformed;
+  FrameResultDto? result;
+  Duration? bridge;
+  Duration? held;
+  bool done = false;
+
+  /// Whether the result was applied (no reset happened while decoding).
+  bool current = false;
+}
+
+({String? cameraId, String facing}) _parseStartResult(Object? result) {
+  final map = result is Map ? result : const <Object?, Object?>{};
+  final id = map['cameraId'];
+  final facing = map['facing'];
+  const known = {'back', 'front', 'external', 'unknown'};
+  return (
+    cameraId: id is String ? id : null,
+    facing: facing is String && known.contains(facing) ? facing : 'unknown',
+  );
+}
+
+CameraBufferInfo? _bufferInfo(Map<Object?, Object?> m) {
+  final width = m['width'], height = m['height'];
+  final yStride = m['yStride'], uvStride = m['uvStride'];
+  final uvPixelStride = m['uvPixelStride'];
+  if (width is! int ||
+      height is! int ||
+      yStride is! int ||
+      uvStride is! int ||
+      uvPixelStride is! int) {
+    return null;
+  }
+  final format = m['format'], rotation = m['rotationDegrees'];
+  final cameraId = m['cameraId'];
+  return CameraBufferInfo(
+    width: width,
+    height: height,
+    format: format is String ? format : 'unknown',
+    yStride: yStride,
+    uvStride: uvStride,
+    uvPixelStride: uvPixelStride,
+    rotationDegrees: rotation is int ? rotation : null,
+    cameraId: cameraId is String ? cameraId : null,
+  );
+}
+
+NativeTimestamp? _capture(Map<Object?, Object?> m) {
+  final nanos = m['timestampNanos'];
+  if (nanos is! int) return null;
+  return NativeTimestamp(nanos, NativeClock.fromWire(m['timestampClock']));
+}
+
+/// Receipt times are Android `elapsedRealtimeNanos` or iOS host time, whatever the capture
+/// clock of the sensor is (PROTOCOL.md, "Diagnostics").
+NativeTimestamp? _received(Map<Object?, Object?> m) {
+  final nanos = m['receivedNanos'];
+  if (nanos is! int) return null;
+  final clock = switch (NativeClock.fromWire(m['timestampClock'])) {
+    NativeClock.androidRealtime ||
+    NativeClock.androidUnknown => NativeClock.androidRealtime,
+    NativeClock.iosHost => NativeClock.iosHost,
+    NativeClock.unknown => NativeClock.unknown,
+  };
+  return NativeTimestamp(nanos, clock);
+}
+
+DecodeTimings _decodeTimings(DecodeTimingsDto t) {
+  Duration? us(int? v) => v == null ? null : Duration(microseconds: v);
+  return DecodeTimings(
+    validate: us(t.validateUs),
+    locate: us(t.locateUs),
+    read: us(t.readUs),
+    receive: us(t.receiveUs),
+    total: Duration(microseconds: t.totalUs),
+  );
 }
 
 CameraFrameDto _frameDto(Map<Object?, Object?> m) {

@@ -710,6 +710,364 @@ void main() {
     });
   });
 
+  group('native clocks', () {
+    test('since subtracts within one clock only', () {
+      const a = NativeTimestamp(5000000, NativeClock.androidRealtime);
+      const b = NativeTimestamp(2000000, NativeClock.androidRealtime);
+      expect(a.since(b), const Duration(milliseconds: 3));
+      expect(
+        a.since(const NativeTimestamp(1, NativeClock.androidUnknown)),
+        isNull,
+      );
+      expect(a.since(const NativeTimestamp(1, NativeClock.iosHost)), isNull);
+      const u = NativeTimestamp(1, NativeClock.unknown);
+      expect(u.since(u), isNull);
+      expect(NativeClock.fromWire('ios_host'), NativeClock.iosHost);
+      expect(NativeClock.fromWire(null), NativeClock.unknown);
+    });
+  });
+
+  group('diagnostics', () {
+    late _Rig rig;
+    late _TestTime time;
+    late ParticleScanner scanner;
+    late List<ScanDiagnostic> diag;
+    late List<ScanEvent> got;
+
+    setUp(() {
+      rig = _Rig()..install();
+      time = _TestTime();
+      scanner = rig.scanner(stopwatch: time.watch);
+      diag = [];
+      got = [];
+      scanner.diagnostics.listen(diag.add);
+      scanner.events.listen(got.add);
+    });
+
+    tearDown(() => scanner.dispose());
+
+    const nativeFields = <String, Object?>{
+      'format': 'YUV_420_888',
+      'rotationDegrees': 90,
+      'cameraId': '0',
+      'timestampNanos': 9000000000,
+      'timestampClock': 'android_realtime',
+      'receivedNanos': 9004000000,
+      'skippedBefore': 3,
+    };
+
+    test('ScanCameraStarted once per start, with startup and camera', () async {
+      rig.handler = (call) =>
+          call.method == 'start' ? {'cameraId': '2', 'facing': 'back'} : null;
+      final started = scanner.start();
+      time.advance(const Duration(milliseconds: 350));
+      rig.frame(1);
+      await started;
+      await pumpEventQueue();
+      rig.next(_rejected('x'));
+      rig.frame(2);
+      await pumpEventQueue();
+      final cameras = diag.whereType<ScanCameraStarted>().toList();
+      expect(cameras, hasLength(1));
+      expect(cameras.single.startup, const Duration(milliseconds: 350));
+      expect(cameras.single.cameraId, '2');
+      expect(cameras.single.facing, 'back');
+      expect(diag.first, isA<ScanCameraStarted>());
+      expect(diag.whereType<ScanFrameDiagnostics>(), hasLength(2));
+
+      // A second start measures from its own call.
+      await scanner.stop();
+      time.advance(const Duration(seconds: 5));
+      rig.handler = (call) =>
+          call.method == 'start' ? {'cameraId': '3', 'facing': 'front'} : null;
+      final again = scanner.start();
+      time.advance(const Duration(milliseconds: 80));
+      rig.frame(3);
+      await again;
+      await pumpEventQueue();
+      final all = diag.whereType<ScanCameraStarted>().toList();
+      expect(all, hasLength(2));
+      expect(all.last.startup, const Duration(milliseconds: 80));
+      expect((all.last.cameraId, all.last.facing), ('3', 'front'));
+    });
+
+    test('a null or odd start result gives unknown facing', () async {
+      await scanner.start(); // the mock returns null
+      rig.frame(1);
+      await pumpEventQueue();
+      final c = diag.whereType<ScanCameraStarted>().single;
+      expect(c.cameraId, isNull);
+      expect(c.facing, 'unknown');
+    });
+
+    test('a decoded frame carries every field', () async {
+      await scanner.start();
+      rig.handler = (call) =>
+          call.method == 'releaseFrame' ? {'heldNanos': 12500000} : null;
+      rig.next(
+        _result(
+          locked: true,
+          progress: const ProgressDto.accepted(
+            have: 5,
+            need: 40,
+            segmentsDone: 1,
+            segmentsTotal: 3,
+          ),
+          packet: const PacketDto(
+            segmentIndex: 2,
+            packetSeed: 77,
+            distinct: true,
+          ),
+        ),
+      );
+      time.advance(const Duration(milliseconds: 100));
+      final gate = rig.decoders.single.gate = Completer<void>();
+      rig.frame(9, extra: nativeFields);
+      await pumpEventQueue();
+      time.advance(const Duration(milliseconds: 42));
+      gate.complete();
+      await pumpEventQueue();
+      final f = diag.whereType<ScanFrameDiagnostics>().single;
+      expect(f.frameId, 9);
+      expect(f.disposition, FrameDisposition.decoded);
+      expect(f.sinceStart, const Duration(milliseconds: 100));
+      expect(f.bridge, const Duration(milliseconds: 42)); // around feed only
+      expect(f.held, const Duration(microseconds: 12500)); // from the release
+      expect(f.skippedBefore, 3);
+      expect(f.buffer!.format, 'YUV_420_888');
+      expect(f.buffer!.rotationDegrees, 90);
+      expect(f.buffer!.cameraId, '0');
+      expect((f.buffer!.width, f.buffer!.height), (640, 480));
+      expect(f.capture!.clock, NativeClock.androidRealtime);
+      expect(f.received!.since(f.capture!), const Duration(milliseconds: 4));
+      expect(f.decode!.validate, const Duration(microseconds: 10));
+      expect(f.decode!.locate, const Duration(milliseconds: 2));
+      expect(f.decode!.read, const Duration(milliseconds: 3));
+      expect(f.decode!.receive, const Duration(microseconds: 400));
+      expect(f.decode!.total, const Duration(microseconds: 5500));
+      expect(f.locked, isTrue);
+      expect(f.rejectStage, isNull);
+      expect(f.rejectCategory, isNull);
+      expect((f.packet!.segmentIndex, f.packet!.packetSeed), (2, 77));
+      expect(f.packet!.distinct, isTrue);
+      expect((f.have, f.need), (5, 40));
+      expect((f.segmentsDone, f.segmentsTotal), (1, 3));
+      expect(f.done, isFalse);
+    });
+
+    test('capture and receipt clocks are not mixed', () async {
+      await scanner.start();
+      rig.frame(
+        1,
+        extra: {...nativeFields, 'timestampClock': 'android_unknown'},
+      );
+      await pumpEventQueue();
+      final f = diag.whereType<ScanFrameDiagnostics>().single;
+      expect(f.capture!.clock, NativeClock.androidUnknown);
+      expect(f.received!.since(f.capture!), isNull);
+    });
+
+    test('absent native fields give nulls and defaults', () async {
+      await scanner.start();
+      rig.next(_rejected('x'));
+      rig.frame(4); // no diagnostics fields, releaseFrame returns null
+      await pumpEventQueue();
+      final f = diag.whereType<ScanFrameDiagnostics>().single;
+      expect(f.held, isNull);
+      expect(f.capture, isNull);
+      expect(f.received, isNull);
+      expect(f.skippedBefore, 0);
+      expect(f.buffer!.format, 'unknown');
+      expect(f.buffer!.rotationDegrees, isNull);
+      expect(f.buffer!.cameraId, isNull);
+      expect(f.disposition, FrameDisposition.decoded);
+    });
+
+    test('rejections name their stage and category', () async {
+      await scanner.start();
+      final cases = {
+        RejectStageDto.buffers: RejectCategoryDto.invalidBuffers,
+        RejectStageDto.locate: RejectCategoryDto.noLock,
+        RejectStageDto.read: RejectCategoryDto.badHeaderCrc,
+        RejectStageDto.receiver: RejectCategoryDto.otherSession,
+      };
+      var id = 0;
+      for (final e in cases.entries) {
+        rig.next(_rejected('x', stage: e.key, category: e.value));
+        rig.frame(++id);
+        await pumpEventQueue();
+      }
+      final frames = diag.whereType<ScanFrameDiagnostics>().toList();
+      expect(
+        [for (final f in frames) f.rejectStage],
+        [
+          RejectStage.buffers,
+          RejectStage.locate,
+          RejectStage.read,
+          RejectStage.receiver,
+        ],
+      );
+      expect(
+        [for (final f in frames) f.rejectCategory],
+        ['invalidBuffers', 'noLock', 'badHeaderCrc', 'otherSession'],
+      );
+    });
+
+    test('every RejectCategoryDto has a lowerCamelCase name', () {
+      for (final c in RejectCategoryDto.values) {
+        expect(c.name, matches(RegExp(r'^[a-z][A-Za-z0-9]*$')));
+      }
+    });
+
+    test('dispositions of skipped and malformed frames', () async {
+      await scanner.start();
+      rig.handler = (call) =>
+          call.method == 'releaseFrame' ? {'heldNanos': 1000} : null;
+      List<ScanFrameDiagnostics> frames() =>
+          diag.whereType<ScanFrameDiagnostics>().toList();
+
+      // Busy: a second frame while one decodes.
+      final gate = rig.decoders.single.gate = Completer<void>();
+      rig.next(_rejected('x'));
+      rig.frame(1);
+      await pumpEventQueue();
+      rig.frame(2);
+      await pumpEventQueue();
+      expect(frames().single.frameId, 2);
+      expect(frames().single.disposition, FrameDisposition.skippedBusy);
+      expect(frames().single.decode, isNull);
+      expect(frames().single.bridge, isNull);
+      expect(frames().single.held, const Duration(microseconds: 1));
+      gate.complete();
+      await pumpEventQueue();
+      expect(frames().last.frameId, 1);
+      expect(frames().last.disposition, FrameDisposition.decoded);
+
+      // Malformed: has an id, bad fields.
+      rig.frame(3, extra: {'width': 'wide'});
+      await pumpEventQueue();
+      expect(frames().last.frameId, 3);
+      expect(frames().last.disposition, FrameDisposition.malformed);
+      expect(frames().last.buffer, isNull);
+      expect(got.whereType<ScanError>().single.code, 'malformed_event');
+
+      // Inactive: while stopping.
+      rig.decoders.single.gate = Completer<void>();
+      rig.next(_rejected('x'));
+      rig.frame(4);
+      await pumpEventQueue();
+      final stop = scanner.stop();
+      await pumpEventQueue();
+      rig.frame(5);
+      await pumpEventQueue();
+      expect(frames().last.frameId, 5);
+      expect(frames().last.disposition, FrameDisposition.skippedInactive);
+      rig.decoders.single.gate!.complete();
+      await stop;
+    });
+
+    test('frames after done are skippedDone', () async {
+      await scanner.start();
+      rig.next(
+        _result(
+          locked: true,
+          progress: ProgressDto.done(payload: Uint8List.fromList([1])),
+        ),
+      );
+      rig.frame(1);
+      await pumpEventQueue();
+      rig.frame(2);
+      await pumpEventQueue();
+      final frames = diag.whereType<ScanFrameDiagnostics>().toList();
+      expect(frames[0].done, isTrue);
+      expect(frames[0].disposition, FrameDisposition.decoded);
+      expect(frames[1].disposition, FrameDisposition.skippedDone);
+      expect(frames[1].done, isFalse);
+    });
+
+    test('a failing decoder is still reported, without decode data', () async {
+      await scanner.start();
+      rig.decoders.single.failWith = StateError('boom');
+      rig.frame(1);
+      await pumpEventQueue();
+      final f = diag.whereType<ScanFrameDiagnostics>().single;
+      expect(f.disposition, FrameDisposition.decoded);
+      expect(f.decode, isNull);
+      expect(f.bridge, isNotNull);
+    });
+
+    test(
+      'nothing is emitted, and nothing breaks, without a listener',
+      () async {
+        final quiet = rig.scanner(stopwatch: time.watch);
+        addTearDown(quiet.dispose);
+        await quiet.start();
+        rig.next(_rejected('x'));
+        rig.frame(1);
+        await pumpEventQueue();
+        expect(rig.released, contains(1));
+      },
+    );
+
+    test(
+      'no deadline: minutes between frames keep decoder and progress',
+      () async {
+        final clock = _Clock();
+        final s = rig.scanner(clock: clock.call, stopwatch: time.watch);
+        addTearDown(s.dispose);
+        final events = <ScanEvent>[];
+        final records = <ScanDiagnostic>[];
+        s.events.listen(events.add);
+        s.diagnostics.listen(records.add);
+        await s.start();
+        const accepted = ProgressDto.accepted(
+          have: 4,
+          need: 40,
+          segmentsDone: 0,
+          segmentsTotal: 3,
+        );
+        rig.next(_result(locked: true, progress: accepted));
+        rig.frame(1);
+        await pumpEventQueue();
+        for (var i = 0; i < 3; i++) {
+          clock.advance(const Duration(minutes: 7));
+          time.advance(const Duration(minutes: 7));
+          rig.next(
+            _result(
+              locked: true,
+              progress: ProgressDto.accepted(
+                have: 5 + i,
+                need: 40,
+                segmentsDone: 0,
+                segmentsTotal: 3,
+              ),
+            ),
+          );
+          rig.frame(2 + i);
+          await pumpEventQueue();
+        }
+        // Same decoder, progress continues, no terminal event or error.
+        expect(rig.decoders, hasLength(1));
+        expect(rig.decoders.single.disposed, isFalse);
+        expect(events.map((e) => e.runtimeType), everyElement(ScanFrame));
+        expect(events.whereType<ScanFrame>().last.have, 7);
+        expect(events.whereType<ScanFrame>().last.need, 40);
+        // A long gap, and a rejected frame after it, still keeps the progress.
+        clock.advance(const Duration(minutes: 30));
+        rig.next(_rejected('x'));
+        rig.frame(9);
+        await pumpEventQueue();
+        final last = events.whereType<ScanFrame>().last;
+        expect((last.have, last.need), (7, 40));
+        expect(rig.decoders, hasLength(1));
+        expect(
+          records.whereType<ScanFrameDiagnostics>().last.sinceStart,
+          const Duration(minutes: 21),
+        );
+      },
+    );
+  });
+
   test('start before ParticleCode.init is a StateError', () async {
     expect(ParticleCode.isInitialized, isFalse);
     final rig = _Rig()..install();
@@ -750,7 +1108,12 @@ void main() {
         final scanner = ParticleScanner();
         addTearDown(scanner.dispose);
         final got = <ScanEvent>[];
+        final records = <ScanFrameDiagnostics>[];
         scanner.events.listen(got.add);
+        scanner.diagnostics
+            .where((d) => d is ScanFrameDiagnostics)
+            .cast<ScanFrameDiagnostics>()
+            .listen(records.add);
         await scanner.start();
 
         rig.frame(
@@ -775,6 +1138,18 @@ void main() {
         expect(f.hintCode, isNot(ScanHint.none));
         expect(f.anchors, isEmpty);
         expect(rig.released, [42]);
+        await pumpEventQueue();
+        final blank = records.single;
+        expect(blank.disposition, FrameDisposition.decoded);
+        expect(blank.rejectStage, RejectStage.locate);
+        expect(blank.rejectCategory, 'noLock');
+        expect(blank.packet, isNull);
+        expect(blank.decode!.validate, isNotNull);
+        expect(blank.decode!.locate, isNotNull);
+        expect(blank.decode!.read, isNull);
+        expect(blank.decode!.receive, isNull);
+        expect(blank.bridge, isNotNull);
+        expect(blank.bridge, greaterThanOrEqualTo(Duration.zero));
 
         // Inconsistent buffers are a rejection, not a crash.
         rig.frame(
@@ -793,6 +1168,12 @@ void main() {
         );
         await rig.waitForRelease(43);
         expect(rig.released, [42, 43]);
+        await pumpEventQueue();
+        final bad = records.last;
+        expect(bad.frameId, 43);
+        expect(bad.rejectStage, RejectStage.buffers);
+        expect(bad.rejectCategory, 'invalidBuffers');
+        expect(bad.decode!.locate, isNull);
 
         await scanner.stop();
         expect(rig.methods.last, 'stop');
@@ -971,11 +1352,72 @@ void main() {
 
 // region test rig
 
+/// A Stopwatch over a time the test moves by hand.
+class _TestTime {
+  Duration now = Duration.zero;
+  void advance(Duration d) => now += d;
+  Stopwatch watch() => _FakeWatch(this);
+}
+
+class _FakeWatch implements Stopwatch {
+  _FakeWatch(this._time);
+
+  final _TestTime _time;
+  Duration? _startedAt;
+  Duration _before = Duration.zero;
+
+  @override
+  void start() => _startedAt ??= _time.now;
+
+  @override
+  void stop() {
+    final at = _startedAt;
+    if (at == null) return;
+    _before += _time.now - at;
+    _startedAt = null;
+  }
+
+  @override
+  void reset() {
+    _before = Duration.zero;
+    if (_startedAt != null) _startedAt = _time.now;
+  }
+
+  @override
+  bool get isRunning => _startedAt != null;
+
+  @override
+  Duration get elapsed {
+    final at = _startedAt;
+    return at == null ? _before : _before + (_time.now - at);
+  }
+
+  @override
+  int get elapsedMicroseconds => elapsed.inMicroseconds;
+
+  @override
+  int get elapsedMilliseconds => elapsed.inMilliseconds;
+
+  @override
+  int get elapsedTicks => elapsed.inMicroseconds;
+
+  @override
+  int get frequency => 1000000;
+}
+
 class _Clock {
   DateTime _now = DateTime(2026);
   DateTime call() => _now;
   void advance(Duration d) => _now = _now.add(d);
 }
+
+const _timings = DecodeTimingsDto(
+  validateUs: 10,
+  locateUs: 2000,
+  readUs: 3000,
+  receiveUs: 400,
+  totalUs: 5500,
+);
 
 FrameResultDto _result({
   bool locked = false,
@@ -983,7 +1425,14 @@ FrameResultDto _result({
   required ProgressDto progress,
   String? hint,
   HintDto hintCode = HintDto.none,
+  RejectStageDto? rejectStage,
+  RejectCategoryDto? rejectCategory,
+  PacketDto? packet,
 }) => FrameResultDto(
+  timings: _timings,
+  rejectStage: rejectStage,
+  rejectCategory: rejectCategory,
+  packet: packet,
   locked: locked,
   profile: locked ? ProfileDto.m : null,
   shapeId: locked ? 28 : null,
@@ -1001,7 +1450,12 @@ FrameResultDto _rejected(
   String reason, {
   String? hint,
   HintDto hintCode = HintDto.none,
+  RejectStageDto stage = RejectStageDto.locate,
+  RejectCategoryDto category = RejectCategoryDto.noLock,
 }) => FrameResultDto(
+  timings: _timings,
+  rejectStage: stage,
+  rejectCategory: category,
   locked: false,
   anchors: const [],
   sharpness: 0,
@@ -1089,13 +1543,17 @@ class _Rig {
     });
   }
 
-  ParticleScanner scanner({DateTime Function()? clock}) => ParticleScanner(
+  ParticleScanner scanner({
+    DateTime Function()? clock,
+    Stopwatch Function()? stopwatch,
+  }) => ParticleScanner(
     decoderFactory: () {
       final d = _FakeDecoder(results);
       decoders.add(d);
       return d;
     },
     clock: clock,
+    stopwatchFactory: stopwatch,
   );
 
   /// Queues the result for the next decoded frame.
@@ -1115,6 +1573,7 @@ class _Rig {
     int uvStride = 320,
     int uvPixelStride = 2,
     List<double> toPreview = const [1, 0, 0, 0, 1, 0],
+    Map<String, Object?> extra = const {},
   }) {
     final event = <String, Object?>{
       'type': 'frame',
@@ -1131,6 +1590,7 @@ class _Rig {
       'uvStride': uvStride,
       'uvPixelStride': uvPixelStride,
       'toPreview': toPreview,
+      ...extra,
     };
     final data = const StandardMethodCodec().encodeSuccessEnvelope(event);
     messenger.handlePlatformMessage(

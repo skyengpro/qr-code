@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+* Added `ParticleScanner.diagnostics`: typed, never rate limited records for benchmarks and
+  field reports. One `ScanCameraStarted` per `start` (startup time, camera id, facing), then
+  one `ScanFrameDiagnostics` per camera frame event after its release: disposition (decoded,
+  skippedBusy, skippedDone, skippedInactive, malformed), buffer info, native capture and
+  receipt timestamps with their clock, skipped frames, bridge round trip, Rust stage timings
+  (`DecodeTimings`), reject stage and category, the packet (segment, seed, whether it was a new
+  distinct symbol), progress and the native hold time. Older native sides that omit the new
+  frame fields give nulls and defaults. The scanner has no deadline: nothing expires however
+  long frames take.
+* The decoder result (`FrameResultDto`) gained `timings`, `rejectStage`, `rejectCategory` and
+  `packet`.
 * The demo app moved from `example/` to `examples/flutter-demo/` at the repository root.
 * The sender now uses flutter_rust_bridge 2.13 (generated bindings in `lib/src/rust/`)
   instead of hand-written `dart:ffi`, JSON and a worker isolate.

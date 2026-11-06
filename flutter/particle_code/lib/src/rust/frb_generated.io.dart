@@ -101,16 +101,31 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MotionConfigDto dco_decode_box_autoadd_motion_config_dto(dynamic raw);
 
   @protected
+  PacketDto dco_decode_box_autoadd_packet_dto(dynamic raw);
+
+  @protected
   ProfileDto dco_decode_box_autoadd_profile_dto(dynamic raw);
 
   @protected
+  RejectCategoryDto dco_decode_box_autoadd_reject_category_dto(dynamic raw);
+
+  @protected
+  RejectStageDto dco_decode_box_autoadd_reject_stage_dto(dynamic raw);
+
+  @protected
   int dco_decode_box_autoadd_u_16(dynamic raw);
+
+  @protected
+  int dco_decode_box_autoadd_u_32(dynamic raw);
 
   @protected
   int dco_decode_box_autoadd_u_8(dynamic raw);
 
   @protected
   CameraFrameDto dco_decode_camera_frame_dto(dynamic raw);
+
+  @protected
+  DecodeTimingsDto dco_decode_decode_timings_dto(dynamic raw);
 
   @protected
   DisplayInfoDto dco_decode_display_info_dto(dynamic raw);
@@ -197,16 +212,33 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
+  PacketDto? dco_decode_opt_box_autoadd_packet_dto(dynamic raw);
+
+  @protected
   ProfileDto? dco_decode_opt_box_autoadd_profile_dto(dynamic raw);
 
   @protected
+  RejectCategoryDto? dco_decode_opt_box_autoadd_reject_category_dto(
+    dynamic raw,
+  );
+
+  @protected
+  RejectStageDto? dco_decode_opt_box_autoadd_reject_stage_dto(dynamic raw);
+
+  @protected
   int? dco_decode_opt_box_autoadd_u_16(dynamic raw);
+
+  @protected
+  int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
 
   @protected
   int? dco_decode_opt_box_autoadd_u_8(dynamic raw);
 
   @protected
   Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  PacketDto dco_decode_packet_dto(dynamic raw);
 
   @protected
   PaletteDto dco_decode_palette_dto(dynamic raw);
@@ -225,6 +257,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ProgressDto dco_decode_progress_dto(dynamic raw);
+
+  @protected
+  RejectCategoryDto dco_decode_reject_category_dto(dynamic raw);
+
+  @protected
+  RejectStageDto dco_decode_reject_stage_dto(dynamic raw);
 
   @protected
   RgbDto dco_decode_rgb_dto(dynamic raw);
@@ -332,16 +370,35 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  PacketDto sse_decode_box_autoadd_packet_dto(SseDeserializer deserializer);
+
+  @protected
   ProfileDto sse_decode_box_autoadd_profile_dto(SseDeserializer deserializer);
 
   @protected
+  RejectCategoryDto sse_decode_box_autoadd_reject_category_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  RejectStageDto sse_decode_box_autoadd_reject_stage_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   int sse_decode_box_autoadd_u_16(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
 
   @protected
   int sse_decode_box_autoadd_u_8(SseDeserializer deserializer);
 
   @protected
   CameraFrameDto sse_decode_camera_frame_dto(SseDeserializer deserializer);
+
+  @protected
+  DecodeTimingsDto sse_decode_decode_timings_dto(SseDeserializer deserializer);
 
   @protected
   DisplayInfoDto sse_decode_display_info_dto(SseDeserializer deserializer);
@@ -430,7 +487,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? sse_decode_opt_String(SseDeserializer deserializer);
 
   @protected
+  PacketDto? sse_decode_opt_box_autoadd_packet_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ProfileDto? sse_decode_opt_box_autoadd_profile_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  RejectCategoryDto? sse_decode_opt_box_autoadd_reject_category_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  RejectStageDto? sse_decode_opt_box_autoadd_reject_stage_dto(
     SseDeserializer deserializer,
   );
 
@@ -438,10 +510,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int? sse_decode_opt_box_autoadd_u_16(SseDeserializer deserializer);
 
   @protected
+  int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
   int? sse_decode_opt_box_autoadd_u_8(SseDeserializer deserializer);
 
   @protected
   Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  PacketDto sse_decode_packet_dto(SseDeserializer deserializer);
 
   @protected
   PaletteDto sse_decode_palette_dto(SseDeserializer deserializer);
@@ -460,6 +538,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ProgressDto sse_decode_progress_dto(SseDeserializer deserializer);
+
+  @protected
+  RejectCategoryDto sse_decode_reject_category_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  RejectStageDto sse_decode_reject_stage_dto(SseDeserializer deserializer);
 
   @protected
   RgbDto sse_decode_rgb_dto(SseDeserializer deserializer);
@@ -580,8 +666,26 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_packet_dto(
+    PacketDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_profile_dto(
     ProfileDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_reject_category_dto(
+    RejectCategoryDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_reject_stage_dto(
+    RejectStageDto self,
     SseSerializer serializer,
   );
 
@@ -589,11 +693,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_u_16(int self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_u_8(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_camera_frame_dto(
     CameraFrameDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_decode_timings_dto(
+    DecodeTimingsDto self,
     SseSerializer serializer,
   );
 
@@ -718,13 +831,34 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_String(String? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_packet_dto(
+    PacketDto? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_profile_dto(
     ProfileDto? self,
     SseSerializer serializer,
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_reject_category_dto(
+    RejectCategoryDto? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_reject_stage_dto(
+    RejectStageDto? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_u_16(int? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_u_8(int? self, SseSerializer serializer);
@@ -734,6 +868,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     Uint8List? self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_packet_dto(PacketDto self, SseSerializer serializer);
 
   @protected
   void sse_encode_palette_dto(PaletteDto self, SseSerializer serializer);
@@ -755,6 +892,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_progress_dto(ProgressDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_reject_category_dto(
+    RejectCategoryDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_reject_stage_dto(
+    RejectStageDto self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_rgb_dto(RgbDto self, SseSerializer serializer);
