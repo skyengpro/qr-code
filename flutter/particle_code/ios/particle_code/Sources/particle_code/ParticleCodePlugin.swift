@@ -70,10 +70,13 @@ public final class ParticleCodePlugin: NSObject, FlutterPlugin {
         case "stop":
             scanner.stop(result)
         case "releaseFrame":
-            if let id = (args?["id"] as? NSNumber)?.intValue {
-                scanner.releaseFrame(id: id)
+            if let id = (args?["id"] as? NSNumber)?.intValue,
+                let heldNanos = scanner.releaseFrame(id: id)
+            {
+                result(["heldNanos": heldNanos])
+            } else {
+                result(nil)
             }
-            result(nil)
         case "setTorch":
             scanner.setTorch(on: args?["on"] as? Bool ?? false, result: result)
         default:
