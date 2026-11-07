@@ -1,7 +1,7 @@
 name: particle_code_hardware_spike
 description: Hardware benchmark spike for the particle_code plugin. Records repeatable sender/receiver trials and exports a report bundle.
 publish_to: none
-version: 0.1.0+1
+version: 0.1.2+3
 
 environment:
   sdk: ^3.10.0
