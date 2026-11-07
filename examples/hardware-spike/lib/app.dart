@@ -24,10 +24,17 @@ class SpikeScope extends InheritedNotifier<SpikeState> {
 /// The hardware spike app.
 class SpikeApp extends StatelessWidget {
   /// Creates the app over an initialized [state].
-  const SpikeApp({super.key, required this.state});
+  const SpikeApp({
+    super.key,
+    required this.state,
+    this.navigatorObservers = const [],
+  });
 
   /// Shared state.
   final SpikeState state;
+
+  /// Observers of the app's navigator (screen reporting for telemetry).
+  final List<NavigatorObserver> navigatorObservers;
 
   @override
   Widget build(BuildContext context) {
@@ -45,6 +52,7 @@ class SpikeApp extends StatelessWidget {
           brightness: Brightness.dark,
           useMaterial3: true,
         ),
+        navigatorObservers: navigatorObservers,
         home: const HomeScreen(),
       ),
     );

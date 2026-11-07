@@ -13,6 +13,10 @@ dependencies:
   device_info_plus: ^13.3.0
   flutter:
     sdk: flutter
+  otel_zone:
+    git:
+      url: https://github.com/vaam-apps/flutter-otel-zone.git
+      ref: 7f4f250b51e40b3b08e917e5800ae3ced2e6ef45
   package_info_plus: ^10.2.2
   particle_code:
     path: ../../flutter/particle_code
