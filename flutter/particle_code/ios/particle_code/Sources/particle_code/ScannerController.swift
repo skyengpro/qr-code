@@ -41,11 +41,18 @@ final class ScannerController: NSObject, AVCaptureVideoDataOutputSampleBufferDel
         let id: Int
         let sampleBuffer: CMSampleBuffer
         let pixelBuffer: CVPixelBuffer
+        /// Host time (`hostNanos()`) at which `captureOutput` got the frame.
+        let receivedNanos: UInt64
     }
 
     private let frameLock = NSLock()
     private var held: HeldFrame?
     private var lastFrameId = 0
+    /// Frames `captureOutput` closed because one was held, since the last frame event.
+    private var skippedSinceEvent = 0
+    /// `didDrop` callbacks (AVFoundation dropped the frame before delivery) since the last
+    /// frame event.
+    private var droppedSinceEvent = 0
 
     // MARK: Main-thread state
 
@@ -124,9 +131,10 @@ final class ScannerController: NSObject, AVCaptureVideoDataOutputSampleBufferDel
             }
             self.applyTorch()
             let running = self.session.isRunning
+            let started = Self.startInfo(for: self.camera)
             DispatchQueue.main.async {
                 if running {
-                    result(nil)
+                    result(started)
                 } else {
                     result(
                         FlutterError(
@@ -235,6 +243,71 @@ final class ScannerController: NSObject, AVCaptureVideoDataOutputSampleBufferDel
         }
     }
 
+    /// The `start` result: `{"cameraId": String?, "facing": String}`. The id names the device
+    /// type and position (no unique device identifier).
+    private static func startInfo(for device: AVCaptureDevice?) -> [String: Any] {
+        [
+            "cameraId": cameraIdValue(device),
+            "facing": facing(device),
+        ]
+    }
+
+    private static func cameraId(_ device: AVCaptureDevice?) -> String? {
+        guard let device = device else { return nil }
+        return "\(device.deviceType.rawValue):\(facing(device))"
+    }
+
+    /// `cameraId` as a channel value (`NSNull` when unknown).
+    private static func cameraIdValue(_ device: AVCaptureDevice?) -> Any {
+        if let id = cameraId(device) { return id }
+        return NSNull()
+    }
+
+    private static func facing(_ device: AVCaptureDevice?) -> String {
+        switch device?.position {
+        case .back?: return "back"
+        case .front?: return "front"
+        default: return "unknown"
+        }
+    }
+
+    /// Monotonic host time in nanoseconds (`mach_absolute_time` units converted, not counting
+    /// sleep): the clock of `CACurrentMediaTime()` and `CMClockGetHostTimeClock()`.
+    private static func hostNanos() -> UInt64 {
+        clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+    }
+
+    /// `CVPixelBufferGetPixelFormatType` as a name: the NV12 codes by name, else the FourCC.
+    private static func formatName(_ code: OSType) -> String {
+        switch code {
+        case kCVPixelFormatType_420YpCbCr8BiPlanarFullRange:
+            return "420YpCbCr8BiPlanarFullRange"
+        case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
+            return "420YpCbCr8BiPlanarVideoRange"
+        default:
+            let bytes = [24, 16, 8, 0].map { UInt8(truncatingIfNeeded: code >> UInt32($0)) }
+            if bytes.allSatisfy({ $0 >= 0x20 && $0 < 0x7f }) {
+                return String(decoding: bytes, as: UTF8.self)
+            }
+            return String(format: "0x%08x", code)
+        }
+    }
+
+    /// The frame's presentation time in nanoseconds of the host time clock. The data output
+    /// stamps buffers with the session's synchronization clock (iOS 15.4+; earlier the
+    /// master clock, which is the host clock on device); converted when it differs.
+    private func captureNanos(_ sampleBuffer: CMSampleBuffer) -> Int {
+        var time = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        if #available(iOS 15.4, *), let clock = session.synchronizationClock,
+            !CFEqual(clock, CMClockGetHostTimeClock())
+        {
+            time = CMSyncConvertTime(time, from: clock, to: CMClockGetHostTimeClock())
+        }
+        guard time.isValid, time.isNumeric else { return 0 }
+        let nanos = CMTimeConvertScale(time, timescale: 1_000_000_000, method: .default)
+        return Int(clamping: nanos.value)
+    }
+
     private static func permissionDenied() -> FlutterError {
         FlutterError(
             code: "permission_denied", message: "Camera permission was denied", details: nil)
@@ -248,8 +321,10 @@ final class ScannerController: NSObject, AVCaptureVideoDataOutputSampleBufferDel
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
+        let receivedNanos = Self.hostNanos()
         frameLock.lock()
         if held != nil {
+            skippedSinceEvent += 1
             frameLock.unlock()
             return
         }
@@ -269,7 +344,13 @@ final class ScannerController: NSObject, AVCaptureVideoDataOutputSampleBufferDel
         }
         lastFrameId += 1
         let id = lastFrameId
-        held = HeldFrame(id: id, sampleBuffer: sampleBuffer, pixelBuffer: pixelBuffer)
+        held = HeldFrame(
+            id: id, sampleBuffer: sampleBuffer, pixelBuffer: pixelBuffer,
+            receivedNanos: receivedNanos)
+        let skipped = skippedSinceEvent
+        let dropped = droppedSinceEvent
+        skippedSinceEvent = 0
+        droppedSinceEvent = 0
         frameLock.unlock()
 
         let width = CVPixelBufferGetWidth(pixelBuffer)
@@ -295,10 +376,31 @@ final class ScannerController: NSObject, AVCaptureVideoDataOutputSampleBufferDel
             "yStride": yStride,
             "uvStride": uvStride,
             "uvPixelStride": 2,
+            "format": Self.formatName(CVPixelBufferGetPixelFormatType(pixelBuffer)),
+            // The output connection stays in the sensor's native orientation and the
+            // rotation to upright is not computed here (`toPreview` carries it).
+            "rotationDegrees": NSNull(),
+            "cameraId": Self.cameraIdValue(camera),
+            "timestampNanos": captureNanos(sampleBuffer),
+            "timestampClock": "ios_host",
+            "receivedNanos": Int(clamping: receivedNanos),
+            "skippedBefore": skipped,
+            "droppedByOutputBefore": dropped,
         ]
         DispatchQueue.main.async { [weak self] in
             self?.deliver(event, id: id, width: width, height: height)
         }
+    }
+
+    /// Capture queue. AVFoundation dropped a frame before delivering it (not a plugin skip).
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didDrop sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        frameLock.lock()
+        droppedSinceEvent += 1
+        frameLock.unlock()
     }
 
     /// Main thread. Adds `toPreview` and sends the event; frees the frame when it cannot be sent.
@@ -317,13 +419,17 @@ final class ScannerController: NSObject, AVCaptureVideoDataOutputSampleBufferDel
         }
     }
 
-    /// Unlocks and drops the frame `id`; unknown ids are ignored. Any thread.
-    func releaseFrame(id: Int) {
+    /// Unlocks and drops the frame `id`; unknown ids are ignored. Any thread. Returns the host
+    /// nanoseconds from receipt to now, or nil for an unknown id.
+    @discardableResult
+    func releaseFrame(id: Int) -> Int? {
         frameLock.lock()
         defer { frameLock.unlock() }
-        guard let frame = held, frame.id == id else { return }
+        guard let frame = held, frame.id == id else { return nil }
+        let now = Self.hostNanos()
         CVPixelBufferUnlockBaseAddress(frame.pixelBuffer, .readOnly)
         held = nil
+        return Int(clamping: now >= frame.receivedNanos ? now - frame.receivedNanos : 0)
     }
 
     /// Unlocks and drops whatever frame is held. Any thread.

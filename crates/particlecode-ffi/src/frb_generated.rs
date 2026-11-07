@@ -1756,6 +1756,24 @@ impl SseDecode for crate::api::dto::CameraFrameDto {
     }
 }
 
+impl SseDecode for crate::api::dto::DecodeTimingsDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_validateUs = <Option<u32>>::sse_decode(deserializer);
+        let mut var_locateUs = <Option<u32>>::sse_decode(deserializer);
+        let mut var_readUs = <Option<u32>>::sse_decode(deserializer);
+        let mut var_receiveUs = <Option<u32>>::sse_decode(deserializer);
+        let mut var_totalUs = <u32>::sse_decode(deserializer);
+        return crate::api::dto::DecodeTimingsDto {
+            validate_us: var_validateUs,
+            locate_us: var_locateUs,
+            read_us: var_readUs,
+            receive_us: var_receiveUs,
+            total_us: var_totalUs,
+        };
+    }
+}
+
 impl SseDecode for crate::api::dto::DisplayInfoDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1963,6 +1981,12 @@ impl SseDecode for crate::api::dto::FrameResultDto {
         let mut var_rejectReason = <Option<String>>::sse_decode(deserializer);
         let mut var_hint = <Option<String>>::sse_decode(deserializer);
         let mut var_hintCode = <crate::api::dto::HintDto>::sse_decode(deserializer);
+        let mut var_timings = <crate::api::dto::DecodeTimingsDto>::sse_decode(deserializer);
+        let mut var_rejectStage =
+            <Option<crate::api::dto::RejectStageDto>>::sse_decode(deserializer);
+        let mut var_rejectCategory =
+            <Option<crate::api::dto::RejectCategoryDto>>::sse_decode(deserializer);
+        let mut var_packet = <Option<crate::api::dto::PacketDto>>::sse_decode(deserializer);
         return crate::api::dto::FrameResultDto {
             locked: var_locked,
             profile: var_profile,
@@ -1974,6 +1998,10 @@ impl SseDecode for crate::api::dto::FrameResultDto {
             reject_reason: var_rejectReason,
             hint: var_hint,
             hint_code: var_hintCode,
+            timings: var_timings,
+            reject_stage: var_rejectStage,
+            reject_category: var_rejectCategory,
+            packet: var_packet,
         };
     }
 }
@@ -2207,6 +2235,17 @@ impl SseDecode for Option<String> {
     }
 }
 
+impl SseDecode for Option<crate::api::dto::PacketDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::dto::PacketDto>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<crate::api::dto::ProfileDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2218,11 +2257,46 @@ impl SseDecode for Option<crate::api::dto::ProfileDto> {
     }
 }
 
+impl SseDecode for Option<crate::api::dto::RejectCategoryDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::dto::RejectCategoryDto>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::dto::RejectStageDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::dto::RejectStageDto>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<u16> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<u16>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<u32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<u32>::sse_decode(deserializer));
         } else {
             return None;
         }
@@ -2248,6 +2322,20 @@ impl SseDecode for Option<Vec<u8>> {
         } else {
             return None;
         }
+    }
+}
+
+impl SseDecode for crate::api::dto::PacketDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_segmentIndex = <u16>::sse_decode(deserializer);
+        let mut var_packetSeed = <u16>::sse_decode(deserializer);
+        let mut var_distinct = <bool>::sse_decode(deserializer);
+        return crate::api::dto::PacketDto {
+            segment_index: var_segmentIndex,
+            packet_seed: var_packetSeed,
+            distinct: var_distinct,
+        };
     }
 }
 
@@ -2348,6 +2436,50 @@ impl SseDecode for crate::api::dto::ProgressDto {
                 unimplemented!("");
             }
         }
+    }
+}
+
+impl SseDecode for crate::api::dto::RejectCategoryDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::dto::RejectCategoryDto::InvalidBuffers,
+            1 => crate::api::dto::RejectCategoryDto::NoLock,
+            2 => crate::api::dto::RejectCategoryDto::Truncated,
+            3 => crate::api::dto::RejectCategoryDto::Residual,
+            4 => crate::api::dto::RejectCategoryDto::Lighting,
+            5 => crate::api::dto::RejectCategoryDto::ProfileMismatch,
+            6 => crate::api::dto::RejectCategoryDto::UnknownShape,
+            7 => crate::api::dto::RejectCategoryDto::BadMagic,
+            8 => crate::api::dto::RejectCategoryDto::BadHeaderCrc,
+            9 => crate::api::dto::RejectCategoryDto::Uncorrectable,
+            10 => crate::api::dto::RejectCategoryDto::PacketCrc,
+            11 => crate::api::dto::RejectCategoryDto::UnsupportedVersion,
+            12 => crate::api::dto::RejectCategoryDto::ShapeTableMismatch,
+            13 => crate::api::dto::RejectCategoryDto::BadProfile,
+            14 => crate::api::dto::RejectCategoryDto::UnsupportedPalette,
+            15 => crate::api::dto::RejectCategoryDto::WrongSymbolCount,
+            16 => crate::api::dto::RejectCategoryDto::OtherSession,
+            17 => crate::api::dto::RejectCategoryDto::Inconsistent,
+            18 => crate::api::dto::RejectCategoryDto::SegmentCrc,
+            19 => crate::api::dto::RejectCategoryDto::PayloadCrc,
+            _ => unreachable!("Invalid variant for RejectCategoryDto: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::api::dto::RejectStageDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::dto::RejectStageDto::Buffers,
+            1 => crate::api::dto::RejectStageDto::Locate,
+            2 => crate::api::dto::RejectStageDto::Read,
+            3 => crate::api::dto::RejectStageDto::Receiver,
+            _ => unreachable!("Invalid variant for RejectStageDto: {}", inner),
+        };
     }
 }
 
@@ -2668,6 +2800,30 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::CameraFrameDto>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::dto::DecodeTimingsDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.validate_us.into_into_dart().into_dart(),
+            self.locate_us.into_into_dart().into_dart(),
+            self.read_us.into_into_dart().into_dart(),
+            self.receive_us.into_into_dart().into_dart(),
+            self.total_us.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::dto::DecodeTimingsDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::DecodeTimingsDto>
+    for crate::api::dto::DecodeTimingsDto
+{
+    fn into_into_dart(self) -> crate::api::dto::DecodeTimingsDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::dto::DisplayInfoDto {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -2849,6 +3005,10 @@ impl flutter_rust_bridge::IntoDart for crate::api::dto::FrameResultDto {
             self.reject_reason.into_into_dart().into_dart(),
             self.hint.into_into_dart().into_dart(),
             self.hint_code.into_into_dart().into_dart(),
+            self.timings.into_into_dart().into_dart(),
+            self.reject_stage.into_into_dart().into_dart(),
+            self.reject_category.into_into_dart().into_dart(),
+            self.packet.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -3005,6 +3165,23 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::motion::MotionConstants>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::dto::PacketDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.segment_index.into_into_dart().into_dart(),
+            self.packet_seed.into_into_dart().into_dart(),
+            self.distinct.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::dto::PacketDto {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::PacketDto> for crate::api::dto::PacketDto {
+    fn into_into_dart(self) -> crate::api::dto::PacketDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::dto::PaletteDto {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -3136,6 +3313,68 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::ProgressDto>
     for crate::api::dto::ProgressDto
 {
     fn into_into_dart(self) -> crate::api::dto::ProgressDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::dto::RejectCategoryDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::InvalidBuffers => 0.into_dart(),
+            Self::NoLock => 1.into_dart(),
+            Self::Truncated => 2.into_dart(),
+            Self::Residual => 3.into_dart(),
+            Self::Lighting => 4.into_dart(),
+            Self::ProfileMismatch => 5.into_dart(),
+            Self::UnknownShape => 6.into_dart(),
+            Self::BadMagic => 7.into_dart(),
+            Self::BadHeaderCrc => 8.into_dart(),
+            Self::Uncorrectable => 9.into_dart(),
+            Self::PacketCrc => 10.into_dart(),
+            Self::UnsupportedVersion => 11.into_dart(),
+            Self::ShapeTableMismatch => 12.into_dart(),
+            Self::BadProfile => 13.into_dart(),
+            Self::UnsupportedPalette => 14.into_dart(),
+            Self::WrongSymbolCount => 15.into_dart(),
+            Self::OtherSession => 16.into_dart(),
+            Self::Inconsistent => 17.into_dart(),
+            Self::SegmentCrc => 18.into_dart(),
+            Self::PayloadCrc => 19.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::dto::RejectCategoryDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::RejectCategoryDto>
+    for crate::api::dto::RejectCategoryDto
+{
+    fn into_into_dart(self) -> crate::api::dto::RejectCategoryDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::dto::RejectStageDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Buffers => 0.into_dart(),
+            Self::Locate => 1.into_dart(),
+            Self::Read => 2.into_dart(),
+            Self::Receiver => 3.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::dto::RejectStageDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::dto::RejectStageDto>
+    for crate::api::dto::RejectStageDto
+{
+    fn into_into_dart(self) -> crate::api::dto::RejectStageDto {
         self
     }
 }
@@ -3311,6 +3550,17 @@ impl SseEncode for crate::api::dto::CameraFrameDto {
     }
 }
 
+impl SseEncode for crate::api::dto::DecodeTimingsDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Option<u32>>::sse_encode(self.validate_us, serializer);
+        <Option<u32>>::sse_encode(self.locate_us, serializer);
+        <Option<u32>>::sse_encode(self.read_us, serializer);
+        <Option<u32>>::sse_encode(self.receive_us, serializer);
+        <u32>::sse_encode(self.total_us, serializer);
+    }
+}
+
 impl SseEncode for crate::api::dto::DisplayInfoDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -3451,6 +3701,10 @@ impl SseEncode for crate::api::dto::FrameResultDto {
         <Option<String>>::sse_encode(self.reject_reason, serializer);
         <Option<String>>::sse_encode(self.hint, serializer);
         <crate::api::dto::HintDto>::sse_encode(self.hint_code, serializer);
+        <crate::api::dto::DecodeTimingsDto>::sse_encode(self.timings, serializer);
+        <Option<crate::api::dto::RejectStageDto>>::sse_encode(self.reject_stage, serializer);
+        <Option<crate::api::dto::RejectCategoryDto>>::sse_encode(self.reject_category, serializer);
+        <Option<crate::api::dto::PacketDto>>::sse_encode(self.packet, serializer);
     }
 }
 
@@ -3654,6 +3908,16 @@ impl SseEncode for Option<String> {
     }
 }
 
+impl SseEncode for Option<crate::api::dto::PacketDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::dto::PacketDto>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<crate::api::dto::ProfileDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -3664,12 +3928,42 @@ impl SseEncode for Option<crate::api::dto::ProfileDto> {
     }
 }
 
+impl SseEncode for Option<crate::api::dto::RejectCategoryDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::dto::RejectCategoryDto>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::dto::RejectStageDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::dto::RejectStageDto>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<u16> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <u16>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<u32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <u32>::sse_encode(value, serializer);
         }
     }
 }
@@ -3691,6 +3985,15 @@ impl SseEncode for Option<Vec<u8>> {
         if let Some(value) = self {
             <Vec<u8>>::sse_encode(value, serializer);
         }
+    }
+}
+
+impl SseEncode for crate::api::dto::PacketDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u16>::sse_encode(self.segment_index, serializer);
+        <u16>::sse_encode(self.packet_seed, serializer);
+        <bool>::sse_encode(self.distinct, serializer);
     }
 }
 
@@ -3775,6 +4078,58 @@ impl SseEncode for crate::api::dto::ProgressDto {
                 unimplemented!("");
             }
         }
+    }
+}
+
+impl SseEncode for crate::api::dto::RejectCategoryDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::dto::RejectCategoryDto::InvalidBuffers => 0,
+                crate::api::dto::RejectCategoryDto::NoLock => 1,
+                crate::api::dto::RejectCategoryDto::Truncated => 2,
+                crate::api::dto::RejectCategoryDto::Residual => 3,
+                crate::api::dto::RejectCategoryDto::Lighting => 4,
+                crate::api::dto::RejectCategoryDto::ProfileMismatch => 5,
+                crate::api::dto::RejectCategoryDto::UnknownShape => 6,
+                crate::api::dto::RejectCategoryDto::BadMagic => 7,
+                crate::api::dto::RejectCategoryDto::BadHeaderCrc => 8,
+                crate::api::dto::RejectCategoryDto::Uncorrectable => 9,
+                crate::api::dto::RejectCategoryDto::PacketCrc => 10,
+                crate::api::dto::RejectCategoryDto::UnsupportedVersion => 11,
+                crate::api::dto::RejectCategoryDto::ShapeTableMismatch => 12,
+                crate::api::dto::RejectCategoryDto::BadProfile => 13,
+                crate::api::dto::RejectCategoryDto::UnsupportedPalette => 14,
+                crate::api::dto::RejectCategoryDto::WrongSymbolCount => 15,
+                crate::api::dto::RejectCategoryDto::OtherSession => 16,
+                crate::api::dto::RejectCategoryDto::Inconsistent => 17,
+                crate::api::dto::RejectCategoryDto::SegmentCrc => 18,
+                crate::api::dto::RejectCategoryDto::PayloadCrc => 19,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
+impl SseEncode for crate::api::dto::RejectStageDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::dto::RejectStageDto::Buffers => 0,
+                crate::api::dto::RejectStageDto::Locate => 1,
+                crate::api::dto::RejectStageDto::Read => 2,
+                crate::api::dto::RejectStageDto::Receiver => 3,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 

@@ -33,6 +33,15 @@ minified apps.
   thread also checks `isHeld(id)` right before emitting, so Dart never gets an id that a
   concurrent `start` has already closed.
 
+Diagnostics (`../PROTOCOL.md`, "Diagnostics"): each `frame` event also carries `format`,
+`rotationDegrees`, `cameraId` (Camera2 id via `Camera2CameraInfo`, null if unavailable),
+`timestampNanos` (`ImageInfo.timestamp`), `timestampClock` (`android_realtime` when
+`SENSOR_INFO_TIMESTAMP_SOURCE` is `REALTIME`, else `android_unknown`; read once per bound camera),
+`receivedNanos` (`SystemClock.elapsedRealtimeNanos()` at the start of `analyze`) and
+`skippedBefore` (images closed because a frame was in flight since the last event). `FrameStore`
+keeps `receivedNanos`, so `releaseFrame` returns `{"heldNanos": ...}` (null for unknown ids).
+`start` returns `{"cameraId", "facing"}`.
+
 `toPreview` is computed on the main thread (`PreviewView.sensorToViewTransform` requires it):
 inverse of `sensorToBufferTransformMatrix`, then the view transform, divided by the view size, as
 `[a, b, c, d, e, f]`. Without a laid-out preview it is the upright image (rotated clockwise by

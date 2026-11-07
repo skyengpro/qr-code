@@ -1,12 +1,15 @@
 //! The receiver: symbols in, progress and payload out.
 
+use std::time::Instant;
+
 use flutter_rust_bridge::frb;
 
 use particlecode_core::{DecodeError, Progress, Receiver, Sym3};
 use particlecode_vision::{PlaneRef, VisionError, YuvFrame, YuvRef, locate, read, sharpness};
 
 use super::dto::{
-    CameraFrameDto, FrameResultDto, HintDto, ImagePointDto, LivenessDto, ProgressDto,
+    CameraFrameDto, DecodeTimingsDto, FrameResultDto, HintDto, ImagePointDto, LivenessDto,
+    PacketDto, ProgressDto, RejectCategoryDto, RejectStageDto,
 };
 
 /// A decoder session. Opaque to the host language; feed it frames until
@@ -114,6 +117,7 @@ impl ParticleDecoder {
     /// anything; a frame failing those checks is a rejection, never an error. Nothing is read
     /// outside the stated lengths, and nothing is written.
     pub fn feed_camera_frame(&mut self, frame: CameraFrameDto) -> FrameResultDto {
+        let start = Instant::now();
         let planes = [
             (frame.y_address, frame.y_len),
             (frame.u_address, frame.u_len),
@@ -123,7 +127,7 @@ impl ParticleDecoder {
             .iter()
             .any(|&(address, len)| address == 0 || len == 0 || isize::try_from(len).is_err())
         {
-            return FrameResultDto::bad_buffers();
+            return FrameResultDto::bad_buffers(Stages::validated(start));
         }
         let [y, u, v] = planes.map(|(address, len)| {
             // SAFETY: non-null and at most isize::MAX bytes (checked above); readable,
@@ -134,7 +138,8 @@ impl ParticleDecoder {
                 std::slice::from_raw_parts(address as *const u8, len)
             }
         });
-        self.feed_yuv_slices(
+        self.feed_yuv_timed(
+            start,
             frame.width,
             frame.height,
             (y, u, v),
@@ -146,22 +151,42 @@ impl ParticleDecoder {
     /// and webcam capture. Alpha is ignored. See [`feed_yuv`](Self::feed_yuv) for the
     /// result.
     pub fn feed_rgba(&mut self, width: u32, height: u32, rgba: Vec<u8>) -> FrameResultDto {
-        self.try_feed_rgba(width, height, &rgba)
-            .unwrap_or_else(FrameResultDto::bad_buffers)
+        let start = Instant::now();
+        let (w, h) = (width as usize, height as usize);
+        let Some(n) = w.checked_mul(h).filter(|&n| n > 0 && n <= rgba.len() / 4) else {
+            return FrameResultDto::bad_buffers(Stages::validated(start));
+        };
+        let rgb: Vec<u8> = rgba[..4 * n]
+            .chunks_exact(4)
+            .flat_map(|p| [p[0], p[1], p[2]])
+            .collect();
+        let yuv = YuvFrame::from_rgb(w, h, &rgb);
+        self.process(&YuvRef::from(&yuv), Stages::validated(start))
     }
 
     /// [`feed_yuv`](Self::feed_yuv) over borrowed buffers; `strides` is
     /// `(y_stride, uv_stride, uv_pixel_stride)`. Camera memory is never copied except for
-    /// de-interleaving chroma.
-    ///
-    /// `None` if the buffers are inconsistent with the dimensions and strides.
-    pub(crate) fn try_feed_yuv(
+    /// de-interleaving chroma. Unusable buffers are reported as a rejection.
+    pub(crate) fn feed_yuv_slices(
         &mut self,
         width: u32,
         height: u32,
         planes: (&[u8], &[u8], &[u8]),
         strides: (u32, u32, u32),
-    ) -> Option<FrameResultDto> {
+    ) -> FrameResultDto {
+        self.feed_yuv_timed(Instant::now(), width, height, planes, strides)
+    }
+
+    /// [`feed_yuv_slices`](Self::feed_yuv_slices) with the call's start time, so the total
+    /// covers work the caller did before.
+    fn feed_yuv_timed(
+        &mut self,
+        start: Instant,
+        width: u32,
+        height: u32,
+        planes: (&[u8], &[u8], &[u8]),
+        strides: (u32, u32, u32),
+    ) -> FrameResultDto {
         let (mut scratch_u, mut scratch_v) = (Vec::new(), Vec::new());
         let planes = YuvPlanes {
             width: width as usize,
@@ -173,44 +198,25 @@ impl ParticleDecoder {
             uv_stride: strides.1 as usize,
             uv_pixel_stride: strides.2 as usize,
         };
-        let yuv = planes.view(&mut scratch_u, &mut scratch_v)?;
-        Some(self.process(&yuv))
+        let Some(yuv) = planes.view(&mut scratch_u, &mut scratch_v) else {
+            return FrameResultDto::bad_buffers(Stages::validated(start));
+        };
+        self.process(&yuv, Stages::validated(start))
     }
 
-    /// [`try_feed_yuv`](Self::try_feed_yuv) with unusable buffers reported as a rejection.
-    pub(crate) fn feed_yuv_slices(
-        &mut self,
-        width: u32,
-        height: u32,
-        planes: (&[u8], &[u8], &[u8]),
-        strides: (u32, u32, u32),
-    ) -> FrameResultDto {
-        self.try_feed_yuv(width, height, planes, strides)
-            .unwrap_or_else(FrameResultDto::bad_buffers)
-    }
-
-    /// [`feed_rgba`](Self::feed_rgba) over a borrowed buffer. `None` if `rgba` is shorter
-    /// than `4 * width * height` or the size is zero.
-    pub(crate) fn try_feed_rgba(
-        &mut self,
-        width: u32,
-        height: u32,
-        rgba: &[u8],
-    ) -> Option<FrameResultDto> {
-        let (w, h) = (width as usize, height as usize);
-        let n = w.checked_mul(h).filter(|&n| n > 0 && n <= rgba.len() / 4)?;
-        let rgb: Vec<u8> = rgba[..4 * n]
-            .chunks_exact(4)
-            .flat_map(|p| [p[0], p[1], p[2]])
-            .collect();
-        let yuv = YuvFrame::from_rgb(w, h, &rgb);
-        Some(self.process(&YuvRef::from(&yuv)))
-    }
-
-    /// The shared camera pipeline: locate, read, feed.
-    fn process(&mut self, yuv: &YuvRef<'_>) -> FrameResultDto {
-        let Some(lock) = locate(yuv.luma()) else {
-            return FrameResultDto::rejected(VisionError::NoLock, "no code in view");
+    /// The shared camera pipeline: locate, read, feed. `stages` already holds the
+    /// validation time.
+    fn process(&mut self, yuv: &YuvRef<'_>, mut stages: Stages) -> FrameResultDto {
+        let mark = Instant::now();
+        let lock = locate(yuv.luma());
+        stages.locate = Some(micros(mark.elapsed()));
+        let Some(lock) = lock else {
+            return FrameResultDto::rejected(
+                VisionError::NoLock,
+                "no code in view",
+                RejectStageDto::Locate,
+                stages,
+            );
         };
         let sharp = sharpness(yuv.luma(), &lock);
         let mut anchors: Vec<ImagePointDto> = lock
@@ -223,10 +229,12 @@ impl ParticleDecoder {
             locked: true,
             anchors,
             sharpness: sharp,
-            ..FrameResultDto::rejected(VisionError::NoLock, "")
+            ..FrameResultDto::rejected(VisionError::NoLock, "", RejectStageDto::Locate, stages)
         };
 
+        let mark = Instant::now();
         let read_result = read(*yuv, &lock, &|p, s| self.rx.dot_order(p, s));
+        stages.read = Some(micros(mark.elapsed()));
         let (header, body, liveness) = match read_result {
             Ok(r) => r,
             Err(e) => {
@@ -235,14 +243,26 @@ impl ParticleDecoder {
                         reason: e.to_string(),
                     },
                     reject_reason: Some(e.to_string()),
+                    reject_stage: Some(RejectStageDto::Read),
+                    reject_category: Some(RejectCategoryDto::from(&e)),
+                    timings: stages.finish(),
                     ..locked.with_hint(vision_hint(&e))
                 };
             }
         };
+        let distinct_before = self.rx.packets().distinct_packets();
+        let mark = Instant::now();
         let progress = self.rx.feed_decoded(&header, &body);
-        let (reject_reason, hint) = match &progress {
+        stages.receive = Some(micros(mark.elapsed()));
+        let packet = PacketDto {
+            segment_index: header.segment_index,
+            packet_seed: header.packet_seed,
+            distinct: self.rx.packets().distinct_packets() > distinct_before,
+        };
+        let (reject_reason, category, hint) = match &progress {
             Progress::Rejected(e) => (
                 Some(e.to_string()),
+                Some(RejectCategoryDto::from(e)),
                 if matches!(
                     e,
                     DecodeError::ShapeTableMismatch(_) | DecodeError::UnknownShape(_)
@@ -252,7 +272,7 @@ impl ParticleDecoder {
                     HintDto::None
                 },
             ),
-            _ => (None, HintDto::None),
+            _ => (None, None, HintDto::None),
         };
         FrameResultDto {
             profile: Some(header.profile.into()),
@@ -260,6 +280,10 @@ impl ParticleDecoder {
             liveness: liveness.into(),
             progress: progress.into(),
             reject_reason,
+            reject_stage: category.map(|_| RejectStageDto::Receiver),
+            reject_category: category,
+            packet: Some(packet),
+            timings: stages.finish(),
             ..locked.with_hint(hint)
         }
     }
@@ -294,12 +318,25 @@ fn vision_hint(e: &VisionError) -> HintDto {
 
 impl FrameResultDto {
     /// A frame whose buffers do not match the stated dimensions and strides.
-    fn bad_buffers() -> FrameResultDto {
-        FrameResultDto::rejected(VisionError::NoLock, "inconsistent image buffers")
+    fn bad_buffers(stages: Stages) -> FrameResultDto {
+        FrameResultDto {
+            reject_category: Some(RejectCategoryDto::InvalidBuffers),
+            ..FrameResultDto::rejected(
+                VisionError::NoLock,
+                "inconsistent image buffers",
+                RejectStageDto::Buffers,
+                stages,
+            )
+        }
     }
 
     /// A frame that was not locked: nothing found, or unusable buffers.
-    fn rejected(e: VisionError, detail: &str) -> FrameResultDto {
+    fn rejected(
+        e: VisionError,
+        detail: &str,
+        stage: RejectStageDto,
+        stages: Stages,
+    ) -> FrameResultDto {
         let reason = if detail.is_empty() {
             e.to_string()
         } else {
@@ -318,6 +355,10 @@ impl FrameResultDto {
             reject_reason: Some(reason),
             hint: None,
             hint_code: HintDto::None,
+            timings: stages.finish(),
+            reject_stage: Some(stage),
+            reject_category: Some(RejectCategoryDto::from(&e)),
+            packet: None,
         }
         .with_hint(vision_hint(&e))
     }
@@ -330,6 +371,44 @@ impl FrameResultDto {
             ..self
         }
     }
+}
+
+/// Elapsed microseconds of the pipeline stages of one call.
+#[derive(Debug, Clone, Copy)]
+struct Stages {
+    start: Instant,
+    validate: Option<u32>,
+    locate: Option<u32>,
+    read: Option<u32>,
+    receive: Option<u32>,
+}
+
+impl Stages {
+    /// Validation of the input finished now; it took the time since `start`.
+    fn validated(start: Instant) -> Stages {
+        Stages {
+            start,
+            validate: Some(micros(start.elapsed())),
+            locate: None,
+            read: None,
+            receive: None,
+        }
+    }
+
+    fn finish(self) -> DecodeTimingsDto {
+        DecodeTimingsDto {
+            validate_us: self.validate,
+            locate_us: self.locate,
+            read_us: self.read,
+            receive_us: self.receive,
+            total_us: micros(self.start.elapsed()),
+        }
+    }
+}
+
+/// A duration in microseconds, saturating.
+fn micros(d: std::time::Duration) -> u32 {
+    u32::try_from(d.as_micros()).unwrap_or(u32::MAX)
 }
 
 /// Borrowed camera planes, before validation.

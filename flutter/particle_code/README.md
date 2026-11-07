@@ -145,6 +145,14 @@ coordinates, so multiply by the widget size (`ScanAnchorsPainter.toWidget`). `Sc
 draws segments and symbols held on its own, wherever you want it. `ScanFrame.hintCode`
 (`ScanHint`) is the localizable form of the advice text in `ScanFrame.hint`.
 
+For benchmarks, `scanner.diagnostics` streams one typed `ScanFrameDiagnostics` per camera
+frame event (decoded or skipped, never rate limited) after a `ScanCameraStarted`: Dart
+`Stopwatch` times (`sinceStart`, `bridge`), Rust stage timings (`decode`), native capture and
+receipt `NativeTimestamp`s (subtract only within one `NativeClock`), `held`, `skippedBefore`,
+the reject stage and category, and the packet (`distinct` is true for a new symbol, false
+for a repeat). Records are produced only while the stream has a listener. See `PROTOCOL.md`,
+"Diagnostics".
+
 ## Platform setup
 
 **Android** (`android/app/src/main/AndroidManifest.xml`):

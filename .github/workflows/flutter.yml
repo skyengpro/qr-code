@@ -9,6 +9,9 @@ name: Flutter
 #            plugin's JNI address helper for every ABI
 #   ios      build the demo app for a device (no codesign) through SwiftPM and through
 #            CocoaPods; it must embed the Rust library as particlecode_ffi.framework
+#   ios-simulator, android-emulator
+#            launch evidence: the demo and the hardware spike start and pass their
+#            integration tests on a simulator / emulator
 #
 # The hook runs `rustup`, which installs the toolchain and targets pinned in
 # crates/particlecode-ffi/rust-toolchain.toml; the runners ship rustup.
@@ -63,6 +66,18 @@ jobs:
 
       - name: Demo, flutter test
         working-directory: examples/flutter-demo
+        run: flutter test
+
+      - name: Spike, flutter pub get
+        working-directory: examples/hardware-spike
+        run: flutter pub get
+
+      - name: Spike, flutter analyze
+        working-directory: examples/hardware-spike
+        run: flutter analyze
+
+      - name: Spike, flutter test
+        working-directory: examples/hardware-spike
         run: flutter test
 
   # The Dart and Rust sides of the bridge are generated from crates/particlecode-ffi/src/api.
@@ -140,19 +155,26 @@ jobs:
         working-directory: examples/flutter-demo
         run: flutter build apk --debug
 
-      - name: The APK carries both native libraries for every ABI
-        working-directory: examples/flutter-demo
+      - name: Spike, flutter build apk --debug
+        working-directory: examples/hardware-spike
+        run: |
+          flutter pub get
+          flutter build apk --debug --dart-define=SOURCE_REVISION=${{ github.sha }}
+
+      - name: Both APKs carry both native libraries for every ABI
         run: |
           set -euo pipefail
-          apk=build/app/outputs/flutter-apk/app-debug.apk
-          test -f "$apk"
-          listing=$(unzip -l "$apk")
-          for abi in arm64-v8a armeabi-v7a x86_64; do
-            for lib in libparticlecode_ffi.so libparticle_code_jni.so; do
-              grep -q "lib/$abi/$lib" <<< "$listing" \
-                || { echo "lib/$abi/$lib is missing from $apk"; exit 1; }
-              echo "found lib/$abi/$lib"
+          for apk in examples/flutter-demo/build/app/outputs/flutter-apk/app-debug.apk \
+                     examples/hardware-spike/build/app/outputs/flutter-apk/app-debug.apk; do
+            test -f "$apk"
+            listing=$(unzip -l "$apk")
+            for abi in arm64-v8a armeabi-v7a x86_64; do
+              for lib in libparticlecode_ffi.so libparticle_code_jni.so; do
+                grep -q "lib/$abi/$lib" <<< "$listing" \
+                  || { echo "lib/$abi/$lib is missing from $apk"; exit 1; }
+              done
             done
+            echo "$apk carries the Rust library and the JNI helper for every ABI"
           done
 
       # The CAMERA permission comes from the plugin's manifest, not the app's, so this
@@ -217,6 +239,14 @@ jobs:
         working-directory: examples/flutter-demo
         run: ../../flutter/particle_code/tool/check_ios_app.sh build/ios/iphoneos/Runner.app
 
+      - name: "SwiftPM: hardware spike, release build and the same check"
+        working-directory: examples/hardware-spike
+        run: |
+          set -euo pipefail
+          flutter pub get
+          flutter build ios --release --no-codesign --dart-define=SOURCE_REVISION=${{ github.sha }}
+          ../../flutter/particle_code/tool/check_ios_app.sh build/ios/iphoneos/Runner.app
+
       # The podspec must keep working for apps that have not moved to SwiftPM. The demo's
       # project carries SwiftPM integration (Flutter 3.47 creates projects with it), so this
       # builds a fresh app created with SwiftPM disabled, the way a CocoaPods-based consumer
@@ -236,3 +266,89 @@ jobs:
             echo "unexpected SwiftPM integration in the CocoaPods app"; exit 1
           fi
           "$GITHUB_WORKSPACE/flutter/particle_code/tool/check_ios_app.sh" build/ios/iphoneos/Runner.app
+
+  # Launch evidence: both apps start on an iOS simulator and run their integration tests
+  # (the Rust library built for the simulator by the hook, loaded through
+  # flutter_rust_bridge). Simulators have no camera; optical performance needs real devices.
+  ios-simulator:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Boot an iPhone simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          udid=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          print(next(d["udid"] for runtime, ds in sorted(devices.items(), reverse=True)
+                     if "iOS" in runtime for d in ds if d["name"].startswith("iPhone")))')
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl list devices booted
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+
+      - name: Demo, integration test on the simulator
+        working-directory: examples/flutter-demo
+        run: |
+          flutter pub get
+          flutter test integration_test -d ${{ steps.sim.outputs.udid }}
+
+      - name: Spike, integration test on the simulator
+        working-directory: examples/hardware-spike
+        run: |
+          flutter pub get
+          flutter test integration_test -d ${{ steps.sim.outputs.udid }} \
+            --dart-define=SOURCE_REVISION=${{ github.sha }}
+
+  # The same on an Android emulator (x86_64, the Rust library built for x86_64-linux-android).
+  android-emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      # Hardware acceleration for the emulator on the Linux runner.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: flutter pub get
+        run: |
+          (cd examples/flutter-demo && flutter pub get)
+          (cd examples/hardware-spike && flutter pub get)
+
+      - name: Integration tests on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: |
+            adb devices
+            cd examples/flutter-demo && flutter test integration_test -d emulator-5554
+            cd examples/hardware-spike && flutter test integration_test -d emulator-5554 --dart-define=SOURCE_REVISION=${{ github.sha }}

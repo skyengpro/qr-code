@@ -11,6 +11,7 @@ use particlecode_core::layout::{SwatchColor, dims};
 use particlecode_core::profile::{Profile, colors};
 use particlecode_core::session::{DisplayInfo, SessionConfig, ShapeChoice};
 use particlecode_core::{DecodeError, Progress};
+use particlecode_vision::VisionError;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------------------
@@ -660,6 +661,135 @@ pub struct FrameResultDto {
     pub hint: Option<String>,
     /// `hint` as a code, for localized UI text. `None` exactly when `hint` is `None`.
     pub hint_code: HintDto,
+    /// How long the stages of this call took (`std::time::Instant` inside Rust).
+    pub timings: DecodeTimingsDto,
+    /// The pipeline stage that rejected the frame, `None` when the receiver accepted it.
+    pub reject_stage: Option<RejectStageDto>,
+    /// Machine-readable cause of the rejection, `None` exactly when `reject_stage` is.
+    pub reject_category: Option<RejectCategoryDto>,
+    /// The packet the frame carried, once its header was read and it reached the receiver.
+    pub packet: Option<PacketDto>,
+}
+
+/// Wall-clock durations of the decoder stages of one `feed_*` call, in microseconds. A stage
+/// that did not run is `None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct DecodeTimingsDto {
+    /// Checking and preparing the input buffers (plane checks, chroma de-interleave,
+    /// RGBA to YUV).
+    pub validate_us: Option<u32>,
+    /// Finding the anchors.
+    pub locate_us: Option<u32>,
+    /// Reading the header and the body dots.
+    pub read_us: Option<u32>,
+    /// The receiver: Reed-Solomon, fountain decoding.
+    pub receive_us: Option<u32>,
+    /// The whole call, including time between stages.
+    pub total_us: u32,
+}
+
+/// The decoder stage that rejected a frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum RejectStageDto {
+    /// Plane addresses, lengths or strides did not fit the dimensions.
+    Buffers,
+    /// No code found.
+    Locate,
+    /// Code found but header or symbols unreadable.
+    Read,
+    /// The receiver refused the packet.
+    Receiver,
+}
+
+/// Why a frame was rejected, one variant per vision and decode error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum RejectCategoryDto {
+    /// Buffers inconsistent with the stated dimensions and strides.
+    InvalidBuffers,
+    /// No anchors found.
+    NoLock,
+    /// Part of the code is outside the image.
+    Truncated,
+    /// The homography does not explain the anchors (false lock or distortion).
+    Residual,
+    /// The calibration hues overlap (dark, glare, color cast).
+    Lighting,
+    /// The header profile differs from the anchor geometry.
+    ProfileMismatch,
+    /// The shape id is not in the table.
+    UnknownShape,
+    /// Header magic mismatch.
+    BadMagic,
+    /// Header CRC-8 mismatch.
+    BadHeaderCrc,
+    /// Reed-Solomon could not correct the header or body.
+    Uncorrectable,
+    /// Packet CRC-32 mismatch.
+    PacketCrc,
+    /// Unsupported format version.
+    UnsupportedVersion,
+    /// Shape table version mismatch.
+    ShapeTableMismatch,
+    /// Reserved profile code.
+    BadProfile,
+    /// Reserved palette.
+    UnsupportedPalette,
+    /// Wrong symbol count for the profile and shape.
+    WrongSymbolCount,
+    /// Packet of another session.
+    OtherSession,
+    /// Header fields inconsistent with the session.
+    Inconsistent,
+    /// A completed segment failed its CRC-32.
+    SegmentCrc,
+    /// The reassembled payload failed its CRC-32.
+    PayloadCrc,
+}
+
+impl From<&DecodeError> for RejectCategoryDto {
+    fn from(e: &DecodeError) -> Self {
+        match e {
+            DecodeError::BadMagic => Self::BadMagic,
+            DecodeError::BadHeaderCrc => Self::BadHeaderCrc,
+            DecodeError::Uncorrectable => Self::Uncorrectable,
+            DecodeError::PacketCrc => Self::PacketCrc,
+            DecodeError::UnsupportedVersion(_) => Self::UnsupportedVersion,
+            DecodeError::ShapeTableMismatch(_) => Self::ShapeTableMismatch,
+            DecodeError::BadProfile => Self::BadProfile,
+            DecodeError::UnsupportedPalette => Self::UnsupportedPalette,
+            DecodeError::UnknownShape(_) => Self::UnknownShape,
+            DecodeError::WrongSymbolCount { .. } => Self::WrongSymbolCount,
+            DecodeError::OtherSession => Self::OtherSession,
+            DecodeError::Inconsistent(_) => Self::Inconsistent,
+            DecodeError::SegmentCrc(_) => Self::SegmentCrc,
+            DecodeError::PayloadCrc => Self::PayloadCrc,
+        }
+    }
+}
+
+impl From<&VisionError> for RejectCategoryDto {
+    fn from(e: &VisionError) -> Self {
+        match e {
+            VisionError::NoLock => Self::NoLock,
+            VisionError::Truncated => Self::Truncated,
+            VisionError::Residual => Self::Residual,
+            VisionError::Lighting => Self::Lighting,
+            VisionError::Header(inner) => Self::from(inner),
+            VisionError::ProfileMismatch => Self::ProfileMismatch,
+            VisionError::UnknownShape(_) => Self::UnknownShape,
+        }
+    }
+}
+
+/// The packet a camera frame carried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct PacketDto {
+    /// Segment the packet belongs to (header field).
+    pub segment_index: u16,
+    /// Fountain symbol id within the segment (header field).
+    pub packet_seed: u16,
+    /// Whether the receiver had not stored this packet before (a new distinct symbol).
+    pub distinct: bool,
 }
 
 /// What the person holding the phone should do; the code behind

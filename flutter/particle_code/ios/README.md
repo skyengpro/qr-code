@@ -9,6 +9,13 @@ needs no symbol keeping. The channel contract is `../PROTOCOL.md`.
   `particle_code/camera_frames` with the plane addresses and the `toPreview` affine. At most
   one frame is in flight; `releaseFrame(id)` (after Dart's `feedCameraFrame` finished) unlocks
   and drops it. Decoding, progress and hints are Dart/Rust.
+  Diagnostics (`../PROTOCOL.md`, "Diagnostics"): frame events carry `format`, `cameraId`
+  (`<deviceType>:<position>`, no device identifier), `timestampNanos` (presentation time
+  converted to the host clock, `timestampClock` `ios_host`), `receivedNanos` (host time
+  `clock_gettime_nsec_np(CLOCK_UPTIME_RAW)`, taken first in `captureOutput`) and
+  `skippedBefore` (frames closed because one was held). `rotationDegrees` is null (not
+  computed). `droppedByOutputBefore` is an extra: `didDrop` callbacks since the last event.
+  `releaseFrame` answers `{"heldNanos": ...}`; `start` answers `{"cameraId", "facing"}`.
 * `PreviewView` is the `particle_code/preview` platform view: an `AVCaptureVideoPreviewLayer`
   with `resizeAspectFill`, rotated to the interface orientation. `toPreview` is computed
   through it (`layerPointConverted(fromCaptureDevicePoint:)`).

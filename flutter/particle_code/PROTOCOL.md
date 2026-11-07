@@ -35,10 +35,10 @@ itself. It is not Rust and has nothing to do with the decoder.
 | Method | Arguments | Result | Errors (`PlatformException.code`) |
 | --- | --- | --- | --- |
 | `requestPermission` | none | `bool` granted | none |
-| `start` | `{"torch": bool?}` | `null` once the camera runs | `permission_denied`, `no_camera`, `camera_error` |
+| `start` | `{"torch": bool?}` | `{"cameraId": String?, "facing": "back" \| "front" \| "external" \| "unknown"}` once the camera runs | `permission_denied`, `no_camera`, `camera_error` |
 | `stop` | none | `null` (idempotent) | none |
 | `setTorch` | `{"on": bool}` | `bool` whether a torch exists | none |
-| `releaseFrame` | `{"id": int}` | `null`; unknown ids are ignored | none |
+| `releaseFrame` | `{"id": int}` | `{"heldNanos": int}`: native monotonic time from receipt (`receivedNanos`) to this release; `null` for unknown ids (ignored) | none |
 
 ## Event channel `particle_code/camera_frames`
 
@@ -55,8 +55,17 @@ Listening does not start the camera; `start` does. Each event is a `Map<String, 
  "yStride": int,                        // bytes per luma row
  "uvStride": int,                       // bytes per chroma row
  "uvPixelStride": int,                  // 2 for interleaved chroma (NV21/NV12), 1 for planar
- "toPreview": [a, b, c, d, e, f]}       // affine map buffer px -> preview, normalized 0..1:
+ "toPreview": [a, b, c, d, e, f],      // affine map buffer px -> preview, normalized 0..1:
                                         //   x' = a*x + b*y + c,  y' = d*x + e*y + f
+ // Diagnostics (see "Diagnostics" below):
+ "format": String,                      // "YUV_420_888" | "420YpCbCr8BiPlanarFullRange"
+ "rotationDegrees": int?,               // clockwise rotation to upright, if known
+ "cameraId": String?,                   // platform camera id (not a device identifier)
+ "timestampNanos": int,                 // capture time of the frame, in timestampClock
+ "timestampClock": String,              // "android_realtime" | "android_unknown" | "ios_host"
+ "receivedNanos": int,                  // native monotonic time the plugin got the frame
+ "skippedBefore": int,                  // frames closed unsent since the previous event
+ "droppedByOutputBefore": int?}         // iOS only: didDrop callbacks since the previous event
 
 {"type": "error", "code": String, "message": String}   // camera failures after start
 ```
@@ -96,6 +105,39 @@ buffer one byte apart, `uvPixelStride` 2). iOS uses
 `kCVPixelFormatType_420YpCbCr8BiPlanarFullRange` (NV12): `uAddress` is the base of plane 1
 (interleaved CbCr), `vAddress` that + 1, `uvPixelStride` 2, `uLen` plane 1's
 `bytesPerRow * heightOfPlane` and `vLen` one byte less.
+
+## Diagnostics
+
+For benchmarks the scanner reports what it can observe, without guessing. Dart turns the
+fields below into typed records on `ParticleScanner.diagnostics`
+(`lib/src/scanner/diagnostics.dart`): one `ScanCameraStarted` after the first frame, then
+one `ScanFrameDiagnostics` per frame event, decoded or not, never rate limited.
+
+**Clocks.** Never subtract values of different clock domains.
+
+* `timestampNanos`: Android `ImageInfo.timestamp` (sensor timestamp). Its clock is
+  `android_realtime` when the camera's `SENSOR_INFO_TIMESTAMP_SOURCE` is `REALTIME` (same
+  base as `SystemClock.elapsedRealtimeNanos`), else `android_unknown`. iOS:
+  `CMSampleBufferGetPresentationTimeStamp` converted to nanoseconds of the host time clock,
+  `ios_host`.
+* `receivedNanos`: when the analyzer / delegate callback got the frame, before any
+  in-flight check. Android `SystemClock.elapsedRealtimeNanos()`; iOS host time
+  (`CACurrentMediaTime()`), so capture-to-receipt is meaningful for `android_realtime` and
+  `ios_host` only. Delivery gaps come from consecutive `timestampNanos`.
+* `heldNanos` (the `releaseFrame` result): `receivedNanos` to release, same native clock.
+* Dart: a `Stopwatch` started by `start` measures time to the first frame event (camera
+  startup), each frame event's arrival, and the `feedCameraFrame` round trip (bridge +
+  decode). Rust measures its stages with `Instant` inside the call
+  (`FrameResultDto.timings`).
+
+**Skips.** `skippedBefore` counts frames the platform delivered to the plugin and the
+plugin closed unsent because a frame was in flight, since the previous `frame` event. Frames
+the camera pipeline dropped before delivery (CameraX `KEEP_ONLY_LATEST`,
+`alwaysDiscardsLateVideoFrames`) are not observable here; gaps between capture timestamps
+show them indirectly, and nothing infers drops from the rate-limited `ScanFrame` events.
+iOS additionally reports `droppedByOutputBefore`: frames AVFoundation itself reported as
+dropped (`captureOutput(_:didDrop:from:)`) since the previous event; Android has no
+equivalent callback and omits it.
 
 ## Dart scanner events
 
