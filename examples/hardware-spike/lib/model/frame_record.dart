@@ -26,6 +26,7 @@ class FrameRecord {
     this.segmentIndex,
     this.packetSeed,
     this.distinct,
+    this.sessionId,
     this.have,
     this.need,
     this.done = false,
@@ -63,6 +64,7 @@ class FrameRecord {
       segmentIndex: d.packet?.segmentIndex,
       packetSeed: d.packet?.packetSeed,
       distinct: d.packet?.distinct,
+      sessionId: d.sessionId,
       have: d.have,
       need: d.need,
       done: d.done,
@@ -94,6 +96,7 @@ class FrameRecord {
       segmentIndex: i('segment_index'),
       packetSeed: i('packet_seed'),
       distinct: j['distinct'] as bool?,
+      sessionId: i('session_id'),
       have: i('have'),
       need: i('need'),
       done: j['done'] as bool? ?? false,
@@ -143,6 +146,9 @@ class FrameRecord {
   /// Whether the packet was new to the receiver.
   final bool? distinct;
 
+  /// Session id from the frame's header, once read (also for a rejected packet).
+  final int? sessionId;
+
   /// Receiver progress after this frame.
   final int? have, need;
 
@@ -175,6 +181,7 @@ class FrameRecord {
     'segment_index': segmentIndex,
     'packet_seed': packetSeed,
     'distinct': distinct,
+    'session_id': sessionId,
     'have': have,
     'need': need,
     'done': done,

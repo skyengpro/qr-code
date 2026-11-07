@@ -6,6 +6,7 @@ import 'device_identity.dart';
 import 'model/device_identity.dart';
 import 'model/trial.dart';
 import 'model/trial_config.dart';
+import 'model/trial_setup.dart';
 import 'report/exporter.dart';
 import 'share/results_service.dart';
 import 'storage/trial_store.dart';
@@ -50,6 +51,7 @@ class SpikeState extends ChangeNotifier {
 
   DeviceIdentity _device = DeviceIdentity.unknown();
   Annotations _annotations = const Annotations();
+  TrialSetup _lastSetup = const TrialSetup();
   List<Trial> _trials = const [];
   int _unreadable = 0;
   int _recovered = 0;
@@ -59,6 +61,9 @@ class SpikeState extends ChangeNotifier {
 
   /// The tester's annotations.
   Annotations get annotations => _annotations;
+
+  /// The New trial form as it was last used; the next trial starts from it.
+  TrialSetup get lastSetup => _lastSetup;
 
   /// Stored trials, newest first.
   List<Trial> get trials => _trials;
@@ -73,6 +78,7 @@ class SpikeState extends ChangeNotifier {
   Future<void> init() async {
     _device = await identityProvider.load();
     _annotations = await store.loadAnnotations();
+    _lastSetup = await store.loadLastSetup();
     final loaded = await store.loadAll();
     _trials = loaded.trials.reversed.toList();
     _unreadable = loaded.unreadable;
@@ -86,6 +92,13 @@ class SpikeState extends ChangeNotifier {
     _annotations = a;
     await store.saveAnnotations(a);
     notifyListeners();
+  }
+
+  /// Remembers [setup] for the next New trial. Kept in memory at once, so the form is
+  /// right even if the write fails; the write only matters across app restarts.
+  Future<void> saveLastSetup(TrialSetup setup) async {
+    _lastSetup = setup;
+    await store.saveLastSetup(setup);
   }
 
   /// A new id for a trial created now.

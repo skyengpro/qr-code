@@ -46,6 +46,20 @@ void main() {
       expect(loaded.trials[1].receiver!.frames.length, 2);
     });
 
+    test(
+      'trials load by creation time, ties by id, whatever the file order',
+      () async {
+        final s = TrialStore(dir);
+        DateTime at(int sec) => DateTime.utc(2026, 11, 7, 10, 0, sec);
+        // File names sort a < m < z; creation times do not.
+        await s.save(createdTrial(id: 'T-z', createdAt: at(1)));
+        await s.save(createdTrial(id: 'T-m', createdAt: at(5)));
+        await s.save(createdTrial(id: 'T-a', createdAt: at(5)));
+        final loaded = await TrialStore(dir).loadAll();
+        expect(loaded.trials.map((t) => t.trialId), ['T-z', 'T-a', 'T-m']);
+      },
+    );
+
     test('saving again replaces the record', () async {
       final s = TrialStore(dir);
       final t = receiverTrial('T-1', TrialStatus.running);

@@ -262,9 +262,11 @@ void main() {
     test('summary rows add up to the trials.csv statuses', () {
       final trials = sampleTrials();
       final byStatus = <String, int>{};
+      final role = trialsHeader.indexOf('role');
+      final status = trialsHeader.indexOf('status');
       for (final r in parseCsv(trialsCsv(trials)).skip(1)) {
-        if (r[2] != 'receiver') continue;
-        byStatus.update(r[3], (v) => v + 1, ifAbsent: () => 1);
+        if (r[role] != 'receiver') continue;
+        byStatus.update(r[status], (v) => v + 1, ifAbsent: () => 1);
       }
       final s = aggregate(trials).overall;
       expect(byStatus['completed'], s.eventualCompletions);

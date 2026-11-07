@@ -142,7 +142,9 @@ void main() {
     for (final id in ['f200', 'f1k', 'f6k', 'f30k']) {
       expect(find.byKey(Key('fixture-$id')), findsOneWidget);
     }
-    expect(find.byKey(const Key('pair-id')), findsOneWidget);
+    // Nothing to type: the receiver reads the sender's pair id from the code.
+    expect(find.byKey(const Key('pair-id')), findsNothing);
+    expect(find.textContaining('nothing to type'), findsOneWidget);
   });
 
   testWidgets(

@@ -1974,6 +1974,7 @@ impl SseDecode for crate::api::dto::FrameResultDto {
         let mut var_locked = <bool>::sse_decode(deserializer);
         let mut var_profile = <Option<crate::api::dto::ProfileDto>>::sse_decode(deserializer);
         let mut var_shapeId = <Option<u8>>::sse_decode(deserializer);
+        let mut var_sessionId = <Option<u16>>::sse_decode(deserializer);
         let mut var_anchors = <Vec<crate::api::dto::ImagePointDto>>::sse_decode(deserializer);
         let mut var_sharpness = <f64>::sse_decode(deserializer);
         let mut var_liveness = <crate::api::dto::LivenessDto>::sse_decode(deserializer);
@@ -1991,6 +1992,7 @@ impl SseDecode for crate::api::dto::FrameResultDto {
             locked: var_locked,
             profile: var_profile,
             shape_id: var_shapeId,
+            session_id: var_sessionId,
             anchors: var_anchors,
             sharpness: var_sharpness,
             liveness: var_liveness,
@@ -2998,6 +3000,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::dto::FrameResultDto {
             self.locked.into_into_dart().into_dart(),
             self.profile.into_into_dart().into_dart(),
             self.shape_id.into_into_dart().into_dart(),
+            self.session_id.into_into_dart().into_dart(),
             self.anchors.into_into_dart().into_dart(),
             self.sharpness.into_into_dart().into_dart(),
             self.liveness.into_into_dart().into_dart(),
@@ -3694,6 +3697,7 @@ impl SseEncode for crate::api::dto::FrameResultDto {
         <bool>::sse_encode(self.locked, serializer);
         <Option<crate::api::dto::ProfileDto>>::sse_encode(self.profile, serializer);
         <Option<u8>>::sse_encode(self.shape_id, serializer);
+        <Option<u16>>::sse_encode(self.session_id, serializer);
         <Vec<crate::api::dto::ImagePointDto>>::sse_encode(self.anchors, serializer);
         <f64>::sse_encode(self.sharpness, serializer);
         <crate::api::dto::LivenessDto>::sse_encode(self.liveness, serializer);

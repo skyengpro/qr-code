@@ -3,6 +3,7 @@ import 'dart:io';
 
 import '../model/trial.dart';
 import '../model/trial_config.dart';
+import '../model/trial_setup.dart';
 
 /// Trials read from disk.
 class LoadedTrials {
@@ -37,7 +38,6 @@ class TrialStore {
 
   /// Writes [trial] (replacing an earlier version of the same trial).
   Future<void> save(Trial trial) async {
-    await _trialsDir.create(recursive: true);
     await _atomicWrite(
       _trialFile(trial.trialId),
       const JsonEncoder.withIndent(' ').convert(trial.toJson()),
@@ -71,7 +71,12 @@ class TrialStore {
         unreadable++;
       }
     }
-    trials.sort((a, b) => a.createdAtUtc.compareTo(b.createdAtUtc));
+    // Ties broken by id: `sort` is not stable, and directory listing order differs
+    // between platforms (sorted on macOS, hashed on Linux ext4).
+    trials.sort((a, b) {
+      final byTime = a.createdAtUtc.compareTo(b.createdAtUtc);
+      return byTime != 0 ? byTime : a.trialId.compareTo(b.trialId);
+    });
     return LoadedTrials(trials, unreadable: unreadable, recovered: recovered);
   }
 
@@ -96,8 +101,23 @@ class TrialStore {
 
   /// Saves [annotations].
   Future<void> saveAnnotations(Annotations annotations) async {
-    await root.create(recursive: true);
     await _atomicWrite(_annotationsFile, jsonEncode(annotations.toJson()));
+  }
+
+  File get _setupFile => File('${root.path}/last_setup.json');
+
+  /// The New trial form as it was last used (defaults if none or unreadable).
+  Future<TrialSetup> loadLastSetup() async {
+    try {
+      return TrialSetup.fromJson(jsonDecode(await _setupFile.readAsString()));
+    } on Object {
+      return const TrialSetup();
+    }
+  }
+
+  /// Saves the New trial form as it was used.
+  Future<void> saveLastSetup(TrialSetup setup) async {
+    await _atomicWrite(_setupFile, jsonEncode(setup.toJson()));
   }
 
   File get _stateFile => File('${root.path}/results_state.json');
@@ -114,16 +134,18 @@ class TrialStore {
 
   /// Saves the export / share state.
   Future<void> saveResultsState(Map<String, Object?> state) async {
-    await root.create(recursive: true);
     await _atomicWrite(_stateFile, jsonEncode(state));
   }
 
   // Writes are serialized: a trial is saved when it starts and again when it ends, and
-  // the two must not race on the same temporary file.
+  // the two must not race on the same temporary file. A write is queued synchronously,
+  // in call order; nothing may be awaited before that (creating the directory used to
+  // be, which let a trial's start record land after its end record).
   Future<void> _writes = Future<void>.value();
 
   Future<void> _atomicWrite(File target, String content) {
     final next = _writes.then((_) async {
+      await target.parent.create(recursive: true);
       final tmp = File('${target.path}.tmp');
       await tmp.writeAsString(content, flush: true);
       await tmp.rename(target.path);

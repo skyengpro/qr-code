@@ -29,6 +29,7 @@ fn run(data: &[u8], mut feed: impl FnMut(&mut ParticleDecoder, u32) -> FrameResu
         assert!(r.packet.is_some());
         assert_eq!(r.profile, Some(ProfileDto::M));
         assert_eq!(r.shape_id, Some(0));
+        assert_eq!(r.session_id, Some(0xC0DE));
         assert!(
             matches!(
                 r.liveness,
@@ -188,6 +189,7 @@ fn unusable_frames_are_rejections_with_hints() {
         assert_eq!(r.reject_stage, Some(stage));
         assert_eq!(r.reject_category, Some(category));
         assert_eq!(r.packet, None);
+        assert_eq!(r.session_id, None);
         assert!(r.timings.validate_us.is_some());
         if stage == RejectStageDto::Buffers {
             assert_eq!((r.timings.locate_us, r.timings.read_us), (None, None));
@@ -254,6 +256,8 @@ fn receiver_rejections_name_their_stage_and_category() {
     let r = dec.feed_rgba(img.width, img.height, rgba(&img));
     assert_eq!(r.reject_stage, Some(RejectStageDto::Receiver));
     assert_eq!(r.reject_category, Some(RejectCategoryDto::OtherSession));
+    // The header was read, so the rejected frame still says which transfer it carried.
+    assert_eq!(r.session_id, Some(0x1234));
     let packet = r.packet.expect("header was read");
     assert!(!packet.distinct);
     assert!(r.timings.receive_us.is_some());

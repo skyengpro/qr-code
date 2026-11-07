@@ -8,6 +8,7 @@ import '../model/observed.dart';
 import '../model/trial.dart';
 import '../model/trial_config.dart';
 import '../trial/sender_recorder.dart';
+import '../trial/trial_factory.dart';
 
 /// Shows the fixture as a full-screen code until the tester taps Done.
 ///
@@ -54,6 +55,8 @@ class _SenderScreenState extends State<SenderScreen> {
           isStatic: _config.isStatic,
           repairPerPass: _config.repairPerPass,
           segmentKbLog2: _config.segmentKbLog2,
+          // The pair id is the code's session id, so the receiver reads it from the code.
+          sessionId: TrialFactory.sessionIdOf(_config.pairId),
         ),
       );
     } on Object catch (e) {
@@ -99,6 +102,9 @@ class _SenderScreenState extends State<SenderScreen> {
         info?.frameHalfSide,
       ),
       quietZonePitches: Observed<double>.measuredOrUnknown(info?.quietZone),
+      pairIdOnScreen: Observed<String>.measuredOrUnknown(
+        info == null ? null : TrialFactory.pairIdOf(info.sessionId),
+      ),
     );
   }
 

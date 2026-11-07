@@ -1900,23 +1900,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   FrameResultDto dco_decode_frame_result_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 14)
-      throw Exception('unexpected arr length: expect 14 but see ${arr.length}');
+    if (arr.length != 15)
+      throw Exception('unexpected arr length: expect 15 but see ${arr.length}');
     return FrameResultDto(
       locked: dco_decode_bool(arr[0]),
       profile: dco_decode_opt_box_autoadd_profile_dto(arr[1]),
       shapeId: dco_decode_opt_box_autoadd_u_8(arr[2]),
-      anchors: dco_decode_list_image_point_dto(arr[3]),
-      sharpness: dco_decode_f_64(arr[4]),
-      liveness: dco_decode_liveness_dto(arr[5]),
-      progress: dco_decode_progress_dto(arr[6]),
-      rejectReason: dco_decode_opt_String(arr[7]),
-      hint: dco_decode_opt_String(arr[8]),
-      hintCode: dco_decode_hint_dto(arr[9]),
-      timings: dco_decode_decode_timings_dto(arr[10]),
-      rejectStage: dco_decode_opt_box_autoadd_reject_stage_dto(arr[11]),
-      rejectCategory: dco_decode_opt_box_autoadd_reject_category_dto(arr[12]),
-      packet: dco_decode_opt_box_autoadd_packet_dto(arr[13]),
+      sessionId: dco_decode_opt_box_autoadd_u_16(arr[3]),
+      anchors: dco_decode_list_image_point_dto(arr[4]),
+      sharpness: dco_decode_f_64(arr[5]),
+      liveness: dco_decode_liveness_dto(arr[6]),
+      progress: dco_decode_progress_dto(arr[7]),
+      rejectReason: dco_decode_opt_String(arr[8]),
+      hint: dco_decode_opt_String(arr[9]),
+      hintCode: dco_decode_hint_dto(arr[10]),
+      timings: dco_decode_decode_timings_dto(arr[11]),
+      rejectStage: dco_decode_opt_box_autoadd_reject_stage_dto(arr[12]),
+      rejectCategory: dco_decode_opt_box_autoadd_reject_category_dto(arr[13]),
+      packet: dco_decode_opt_box_autoadd_packet_dto(arr[14]),
     );
   }
 
@@ -2762,6 +2763,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     final var_locked = sse_decode_bool(deserializer);
     final var_profile = sse_decode_opt_box_autoadd_profile_dto(deserializer);
     final var_shapeId = sse_decode_opt_box_autoadd_u_8(deserializer);
+    final var_sessionId = sse_decode_opt_box_autoadd_u_16(deserializer);
     final var_anchors = sse_decode_list_image_point_dto(deserializer);
     final var_sharpness = sse_decode_f_64(deserializer);
     final var_liveness = sse_decode_liveness_dto(deserializer);
@@ -2781,6 +2783,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       locked: var_locked,
       profile: var_profile,
       shapeId: var_shapeId,
+      sessionId: var_sessionId,
       anchors: var_anchors,
       sharpness: var_sharpness,
       liveness: var_liveness,
@@ -3678,6 +3681,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.locked, serializer);
     sse_encode_opt_box_autoadd_profile_dto(self.profile, serializer);
     sse_encode_opt_box_autoadd_u_8(self.shapeId, serializer);
+    sse_encode_opt_box_autoadd_u_16(self.sessionId, serializer);
     sse_encode_list_image_point_dto(self.anchors, serializer);
     sse_encode_f_64(self.sharpness, serializer);
     sse_encode_liveness_dto(self.liveness, serializer);

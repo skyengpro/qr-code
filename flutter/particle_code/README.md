@@ -149,8 +149,9 @@ For benchmarks, `scanner.diagnostics` streams one typed `ScanFrameDiagnostics` p
 frame event (decoded or skipped, never rate limited) after a `ScanCameraStarted`: Dart
 `Stopwatch` times (`sinceStart`, `bridge`), Rust stage timings (`decode`), native capture and
 receipt `NativeTimestamp`s (subtract only within one `NativeClock`), `held`, `skippedBefore`,
-the reject stage and category, and the packet (`distinct` is true for a new symbol, false
-for a repeat). Records are produced only while the stream has a listener. See `PROTOCOL.md`,
+the reject stage and category, the packet (`distinct` is true for a new symbol, false
+for a repeat) and the header's `sessionId` (set as soon as the header is read, even when the
+packet is then rejected). Records are produced only while the stream has a listener. See `PROTOCOL.md`,
 "Diagnostics".
 
 ## Platform setup

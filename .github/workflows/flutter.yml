@@ -296,17 +296,21 @@ jobs:
           xcrun simctl list devices booted
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
 
+      # Under a watchdog: launching on the simulator sometimes hangs after the build
+      # (see .github/scripts/simulator-test.sh); a hang is retried once, a failure is not.
       - name: Demo, integration test on the simulator
         working-directory: examples/flutter-demo
         run: |
           flutter pub get
-          flutter test integration_test -d ${{ steps.sim.outputs.udid }}
+          "$GITHUB_WORKSPACE/.github/scripts/simulator-test.sh" ${{ steps.sim.outputs.udid }} \
+            com.vaam.particlecode.particleCodeExample
 
       - name: Spike, integration test on the simulator
         working-directory: examples/hardware-spike
         run: |
           flutter pub get
-          flutter test integration_test -d ${{ steps.sim.outputs.udid }} \
+          "$GITHUB_WORKSPACE/.github/scripts/simulator-test.sh" ${{ steps.sim.outputs.udid }} \
+            com.vaam.particlecode.particleCodeHardwareSpike \
             --dart-define=SOURCE_REVISION=${{ github.sha }}
 
   # The same on an Android emulator (x86_64, the Rust library built for x86_64-linux-android).

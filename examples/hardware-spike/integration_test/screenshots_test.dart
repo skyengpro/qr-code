@@ -51,6 +51,8 @@ void main() {
       300,
       scrollable: find.byType(Scrollable).first,
     );
+    await tester.ensureVisible(tile);
+    await tester.pump();
     await tester.tap(tile);
     await tester.pumpAndSettle();
     await binding.takeScreenshot('4-trial-detail');
@@ -74,6 +76,10 @@ Future<void> _createTrial(WidgetTester tester) async {
     300,
     scrollable: find.byType(Scrollable).first,
   );
+  // scrollUntilVisible stops once the button is built, which can be in the list's
+  // cache area just below the screen on a phone-sized view: scroll it fully in.
+  await tester.ensureVisible(find.byKey(const Key('create-trial')));
+  await tester.pump();
   await tester.tap(find.byKey(const Key('create-trial')));
 }
 

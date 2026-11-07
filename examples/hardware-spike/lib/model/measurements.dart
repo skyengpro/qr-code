@@ -21,6 +21,7 @@ class SenderMeasurements {
     this.brightness = const Observed.unknown(),
     this.brightnessPolicy = defaultBrightnessPolicy,
     this.shownMs = const Observed.unknown(),
+    this.pairIdOnScreen = const Observed.unknown(),
   });
 
   /// Parses [toJson].
@@ -75,6 +76,7 @@ class SenderMeasurements {
         brightnessPolicy:
             j['brightness_policy'] as String? ?? defaultBrightnessPolicy,
         shownMs: Observed.fromJson<double>(j['shown_ms'], decode: decodeDouble),
+        pairIdOnScreen: Observed.fromJson<String>(j['pair_id_on_screen']),
       );
 
   /// The plugin forces maximum brightness while a code is shown and does not read the
@@ -102,6 +104,10 @@ class SenderMeasurements {
   /// How long the code was shown (monotonic).
   final Observed<double> shownMs;
 
+  /// The session id the encoder put in every header, as `P-xxxx`: what a receiver reads
+  /// as its `observed_pair_id`. Equals the trial's pair id unless that was not `P-xxxx`.
+  final Observed<String> pairIdOnScreen;
+
   /// A copy with a new [shownMs].
   SenderMeasurements withShown(double ms) => SenderMeasurements(
     logicalWidth: logicalWidth,
@@ -119,6 +125,7 @@ class SenderMeasurements {
     brightness: brightness,
     brightnessPolicy: brightnessPolicy,
     shownMs: Observed<double>.measured(ms),
+    pairIdOnScreen: pairIdOnScreen,
   );
 
   /// JSON form.
@@ -138,6 +145,7 @@ class SenderMeasurements {
     'brightness': brightness.toJson(),
     'brightness_policy': brightnessPolicy,
     'shown_ms': shownMs.toJson(),
+    'pair_id_on_screen': pairIdOnScreen.toJson(),
   };
 }
 
@@ -291,6 +299,8 @@ class ReceiverMeasurements {
     this.receivedSha256,
     this.observedProfile = const Observed.unknown(),
     this.observedShapeId = const Observed.unknown(),
+    this.observedPairId = const Observed.unknown(),
+    this.pairIdsSeen = const {},
     this.have = 0,
     this.need = 0,
     this.segmentsDone = 0,
@@ -343,6 +353,8 @@ class ReceiverMeasurements {
         j['observed_shape_id'],
         decode: decodeInt,
       ),
+      observedPairId: Observed.fromJson<String>(j['observed_pair_id']),
+      pairIdsSeen: counts(j['pair_ids_seen']),
       have: (j['have'] as num?)?.toInt() ?? 0,
       need: (j['need'] as num?)?.toInt() ?? 0,
       segmentsDone: (j['segments_done'] as num?)?.toInt() ?? 0,
@@ -402,6 +414,14 @@ class ReceiverMeasurements {
   final Observed<String> observedProfile;
   final Observed<int> observedShapeId;
 
+  /// The sender's pair id, read from the code: the session id of the headers this trial
+  /// read, as `P-xxxx` (the one seen in the most frames). Unknown if no header was read.
+  final Observed<String> observedPairId;
+
+  /// Frames per pair id whose header was read; more than one key means another code
+  /// was in view too.
+  final Map<String, int> pairIdsSeen;
+
   /// Last known receiver progress.
   final int have, need, segmentsDone, segmentsTotal;
 
@@ -439,6 +459,8 @@ class ReceiverMeasurements {
     'received_sha256': receivedSha256,
     'observed_profile': observedProfile.toJson(),
     'observed_shape_id': observedShapeId.toJson(),
+    'observed_pair_id': observedPairId.toJson(),
+    'pair_ids_seen': pairIdsSeen,
     'have': have,
     'need': need,
     'segments_done': segmentsDone,
