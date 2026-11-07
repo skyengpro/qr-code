@@ -68,6 +68,9 @@ void main() {
     expect(trial.config.role.name, 'sender');
     expect(trial.status, TrialStatus.completed);
     expect(trial.sender!.devicePixelRatio.value, isNotNull);
+    // The real encoder put the trial's pair id in every header as the session id.
+    expect(trial.config.pairId, matches(RegExp(r'^P-[0-9a-f]{4}$')));
+    expect(trial.sender!.pairIdOnScreen.value, trial.config.pairId);
 
     // Export works offline and writes a bundle.
     await tester.tap(find.byKey(const Key('export-results')));

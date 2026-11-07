@@ -161,4 +161,22 @@ void main() {
     final s = TrialConfig.fromJson({...testConfig().toJson(), 'static': true});
     expect(s.ecc, 'RS(255,159)');
   });
+
+  group('pair id <-> session id', () {
+    test('a pair id is the code session id as 4 hex digits', () {
+      expect(TrialFactory.pairIdOf(0xbeef), 'P-beef');
+      expect(TrialFactory.pairIdOf(0x2a), 'P-002a');
+      expect(TrialFactory.sessionIdOf('P-beef'), 0xbeef);
+      expect(TrialFactory.sessionIdOf(' P-BEEF '), 0xbeef);
+      for (var id = 0; id < 0x10000; id += 0x1111) {
+        expect(TrialFactory.sessionIdOf(TrialFactory.pairIdOf(id)), id);
+      }
+    });
+
+    test('anything else is not a pair id', () {
+      for (final bad in ['', 'P-', 'P-12345', 'beef', 'P-zzzz', 'Q-beef']) {
+        expect(TrialFactory.sessionIdOf(bad), isNull, reason: bad);
+      }
+    });
+  });
 }

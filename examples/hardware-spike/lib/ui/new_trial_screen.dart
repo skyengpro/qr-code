@@ -1,11 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../app.dart';
 import '../fixtures.dart';
 import '../model/observed.dart';
 import '../model/trial_config.dart';
+import '../model/trial_setup.dart';
 import 'receiver_screen.dart';
 import 'sender_screen.dart';
+
+const List<int> _fpsChoices = [5, 8, 10, 12, 15, 20, 30];
+const List<int> _repairChoices = [0, 1, 2, 3, 4, 6];
 
 /// Chooses role, pair id, fixture, code settings and manual conditions, then starts the
 /// sender or receiver screen.
@@ -19,7 +25,7 @@ class NewTrialScreen extends StatefulWidget {
 
 class _NewTrialScreenState extends State<NewTrialScreen> {
   TrialRole _role = TrialRole.receiver;
-  final _pair = TextEditingController();
+  String _pairId = '';
   Fixture _fixture = Fixtures.f1k;
   String _profile = 'M';
   int _shapeId = 0;
@@ -34,10 +40,12 @@ class _NewTrialScreenState extends State<NewTrialScreen> {
   final _notes = TextEditingController();
   String? _error;
   bool _initialized = false;
+  // Bumped by Reset so the dropdowns, which keep their own value, are rebuilt.
+  int _generation = 0;
 
   @override
   void dispose() {
-    for (final c in [_pair, _distance, _size, _lighting, _protector, _notes]) {
+    for (final c in [_distance, _size, _lighting, _protector, _notes]) {
       c.dispose();
     }
     super.dispose();
@@ -48,12 +56,25 @@ class _NewTrialScreenState extends State<NewTrialScreen> {
     final state = SpikeScope.of(context);
     if (!_initialized) {
       _initialized = true;
-      _pair.text = state.newPairId();
+      _pairId = state.newPairId();
+      _apply(state.lastSetup);
     }
     final theme = Theme.of(context);
     final receiver = _role == TrialRole.receiver;
     return Scaffold(
-      appBar: AppBar(title: const Text('New trial')),
+      appBar: AppBar(
+        title: const Text('New trial'),
+        actions: [
+          TextButton(
+            key: const Key('reset-setup'),
+            onPressed: () => setState(() {
+              _apply(const TrialSetup());
+              _generation++;
+            }),
+            child: const Text('Reset'),
+          ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -78,16 +99,13 @@ class _NewTrialScreenState extends State<NewTrialScreen> {
           const SizedBox(height: 8),
           Text(
             receiver
-                ? 'Receiver: declare the settings the sender uses (the receiver '
-                      'cannot read them all). Use the same pair id on both phones.'
-                : 'Sender: shows the code with these settings. Use the same pair id '
-                      'on the receiver.',
+                ? 'Receiver: nothing to type. The sender\'s pair id, profile, shape '
+                      'and payload are read from the code. The settings below are '
+                      'recorded as declared; the sender\'s report has the real ones.'
+                : 'Sender: shows the code labelled with its pair id $_pairId. The '
+                      'pair id is inside the code, so the receiver needs no input.',
+            key: const Key('role-help'),
             style: theme.textTheme.bodySmall,
-          ),
-          TextField(
-            key: const Key('pair-id'),
-            controller: _pair,
-            decoration: const InputDecoration(labelText: 'Pair id'),
           ),
           const SizedBox(height: 16),
           Text('Fixture', style: theme.textTheme.titleSmall),
@@ -144,12 +162,13 @@ class _NewTrialScreenState extends State<NewTrialScreen> {
             children: [
               Expanded(
                 child: DropdownButtonFormField<int>(
+                  key: ValueKey('fps-$_generation'),
                   initialValue: _fps,
                   decoration: const InputDecoration(
                     labelText: 'Update rate (fps)',
                   ),
                   items: [
-                    for (final v in const [5, 8, 10, 12, 15, 20, 30])
+                    for (final v in _fpsChoices)
                       DropdownMenuItem(value: v, child: Text('$v')),
                   ],
                   onChanged: (v) => setState(() => _fps = v ?? _fps),
@@ -158,12 +177,13 @@ class _NewTrialScreenState extends State<NewTrialScreen> {
               const SizedBox(width: 12),
               Expanded(
                 child: DropdownButtonFormField<int>(
+                  key: ValueKey('repair-$_generation'),
                   initialValue: _repair,
                   decoration: const InputDecoration(
                     labelText: 'Repair per pass',
                   ),
                   items: [
-                    for (final v in const [0, 1, 2, 3, 4, 6])
+                    for (final v in _repairChoices)
                       DropdownMenuItem(value: v, child: Text('$v')),
                   ],
                   onChanged: (v) => setState(() => _repair = v ?? _repair),
@@ -245,6 +265,42 @@ class _NewTrialScreenState extends State<NewTrialScreen> {
     );
   }
 
+  /// Fills the form from [s]; a value the form does not offer keeps the default.
+  void _apply(TrialSetup s) {
+    const d = TrialSetup();
+    _role = s.role;
+    _fixture = Fixtures.byId(s.fixtureId) ?? Fixtures.byId(d.fixtureId)!;
+    _profile = s.profile;
+    _shapeId = ShapeOption.all.any((o) => o.id == s.shapeId)
+        ? s.shapeId
+        : d.shapeId;
+    _fps = _fpsChoices.contains(s.fps) ? s.fps : d.fps;
+    _static = s.isStatic;
+    _repair = _repairChoices.contains(s.repairPerPass)
+        ? s.repairPerPass
+        : d.repairPerPass;
+    _motion = s.motion;
+    _distance.text = s.distanceCm;
+    _size.text = s.codeSizeMm;
+    _lighting.text = s.lighting;
+    _protector.text = s.screenProtector;
+  }
+
+  TrialSetup _currentSetup() => TrialSetup(
+    role: _role,
+    fixtureId: _fixture.id,
+    profile: _profile,
+    shapeId: _shapeId,
+    fps: _fps,
+    isStatic: _static,
+    repairPerPass: _repair,
+    motion: _motion,
+    distanceCm: _distance.text.trim(),
+    codeSizeMm: _size.text.trim(),
+    lighting: _lighting.text.trim(),
+    screenProtector: _protector.text.trim(),
+  );
+
   Observed<double> _number(TextEditingController c, String name) {
     final t = c.text.trim();
     if (t.isEmpty) return const Observed.unknown();
@@ -256,10 +312,6 @@ class _NewTrialScreenState extends State<NewTrialScreen> {
   void _create(BuildContext context) {
     final state = SpikeScope.of(context);
     final navigator = Navigator.of(context);
-    if (_pair.text.trim().isEmpty) {
-      setState(() => _error = 'Enter a pair id.');
-      return;
-    }
     final Observed<double> distance;
     final Observed<double> size;
     try {
@@ -271,7 +323,8 @@ class _NewTrialScreenState extends State<NewTrialScreen> {
     }
     final config = TrialConfig(
       role: _role,
-      pairId: _pair.text.trim(),
+      // A receiver learns the pair id from the code (`observed_pair_id`).
+      pairId: _role == TrialRole.sender ? _pairId : '',
       fixtureId: _fixture.id,
       payloadBytes: _fixture.byteCount,
       profile: _profile,
@@ -291,6 +344,8 @@ class _NewTrialScreenState extends State<NewTrialScreen> {
       screenProtector: Observed<String>.manualOrUnknown(_protector.text.trim()),
       notes: Observed<String>.manualOrUnknown(_notes.text.trim()),
     );
+    // Remembered even if the write fails: it only matters across restarts.
+    unawaited(state.saveLastSetup(_currentSetup()).catchError((Object _) {}));
     final trial = state.createTrial(config, conditions);
     navigator.pushReplacement(
       MaterialPageRoute<void>(

@@ -61,12 +61,15 @@ the other as receiver), then older and low-memory Android phones as receivers.
 1. On each phone open **Home** and fill in the **annotations**: the hardware variant (SKU,
    RAM/storage), the region/carrier variant, and the *other* phone's model and variant (the app
    cannot detect a remote phone). Press **Save annotations**.
-2. **New trial** on both phones. Use the **same pair id** (suggested as `P-xxxx`; type the sender's
-   on the receiver). Pick the same fixture, profile (S/M/L), shape, update rate, animated/static,
-   repair per pass and motion on both: the sender applies them, the receiver records them as
-   *declared* settings because it cannot read them all from the code.
+2. **New trial** on both phones. Nothing has to be typed to link them: the sender gets a fresh
+   pair id (`P-xxxx`) and puts it **inside the code** as its session id, and the receiver reads it
+   from the code (`observed_pair_id`). On the sender, pick the fixture, profile (S/M/L), shape,
+   update rate, animated/static, repair per pass and motion. The receiver's settings are only
+   *declared*; the sender's report has the real ones, and `tool/pair_reports.dart` uses those.
    Optionally note distance, lighting, screen protector, the physical size of the code on the
    sender's screen, and free notes; these are stored as manual entries.
+   The form **remembers its last settings** (`last_setup.json`, this phone only), so the next
+   trial only needs the one or two settings under test changed; **Reset** restores the defaults.
 3. **Sender**: press **Show code**. The code fills the screen at maximum brightness (forced by the
    plugin) with the trial id above it. Keep it up until the receiver is finished, then **Done**.
 4. **Receiver**: press **Prepare receiver trial**, allow the camera, aim at the sender and press
@@ -75,6 +78,18 @@ the other as receiver), then older and low-memory Android phones as receivers.
    **Stop (incomplete)** ends a scan that is going nowhere (recorded as *incomplete*); **Cancel**
    discards intent (recorded as *cancelled*). Both are kept and counted.
 5. Repeat. Several trials per configuration; vary one thing at a time; do not delete failures.
+6. **Export results** on both phones and collect the zips in one folder. Then pair them:
+
+   ```sh
+   dart run tool/pair_reports.dart <folder-or-zips> -o paired.csv
+   ```
+
+   One row per receiver trial with the sender's real settings next to the outcome. `match` says
+   how it was paired: `pairId` (read from the code), `time` (no pair id read, or a report from
+   before 0.1.3: the one sender trial on another phone showing a code at the time),
+   `ambiguous` or `unpaired`. `integrity_vs_sender` checks the decoded bytes against the fixture
+   the sender really showed, and `declared_differs` lists receiver settings that were declared
+   wrong (not an error of the decoder).
 
 ### Fixtures
 
@@ -189,6 +204,10 @@ Each trial: `trial_id`, `status` (`completed | incomplete | cancelled | error`),
 (role, pair id, fixture id and bytes, profile, shape id and name, fps, static, ECC, repair per
 pass, motion, `config_source` = `configured` for the sender and `declared` for the receiver),
 `conditions` (manual), `annotations`, `device`, and `sender` or `receiver` measurements.
+Pairing fields: the sender's `pair_id_on_screen` (the session id in its headers), the receiver's
+`observed_pair_id` (read from the headers, the most frequent if several codes were seen) and
+`pair_ids_seen` (frames per pair id), and each frame's `session_id` (`pair_id` in `frames.csv`;
+`observed_pair_id` in `trials.csv`).
 
 Units: `*_ms` milliseconds, `*_px` pixels (logical or physical as named), `*_mm` millimetres,
 `*_cm` centimetres, `*_bytes` bytes, `physical_ram_mb` megabytes, `*_utc` ISO 8601 UTC, `fps`

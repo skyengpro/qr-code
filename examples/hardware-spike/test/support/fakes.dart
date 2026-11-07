@@ -88,6 +88,7 @@ ScanFrameDiagnostics diagFrame({
   int? have,
   int? need,
   CameraBufferInfo? buffer,
+  int? sessionId,
 }) => ScanFrameDiagnostics(
   frameId: id,
   disposition: disposition,
@@ -110,6 +111,7 @@ ScanFrameDiagnostics diagFrame({
   packet: accepted
       ? PacketInfo(segmentIndex: 0, packetSeed: id, distinct: distinct)
       : null,
+  sessionId: sessionId,
   have: have,
   need: need,
   done: done,

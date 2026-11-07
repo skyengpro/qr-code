@@ -1,78 +1,15 @@
 import '../model/trial.dart';
+import '../trial/trial_factory.dart';
 import 'aggregation.dart';
+import 'csv_codec.dart';
 
-/// Encodes rows as RFC 4180 CSV (comma separated, `\n` line ends, quotes doubled).
-String encodeCsv(List<String> header, List<List<Object?>> rows) {
-  final b = StringBuffer()..writeln(_line(header));
-  for (final r in rows) {
-    b.writeln(_line(r));
-  }
-  return b.toString();
-}
-
-String _line(List<Object?> cells) => cells.map(_cell).join(',');
-
-String _cell(Object? v) {
-  if (v == null) return '';
-  final s = '$v';
-  if (s.contains(',') ||
-      s.contains('"') ||
-      s.contains('\n') ||
-      s.contains('\r')) {
-    return '"${s.replaceAll('"', '""')}"';
-  }
-  return s;
-}
-
-/// Parses CSV text produced by [encodeCsv] into rows of cells.
-List<List<String>> parseCsv(String text) {
-  final rows = <List<String>>[];
-  var row = <String>[];
-  final cell = StringBuffer();
-  var quoted = false;
-  var any = false;
-  for (var i = 0; i < text.length; i++) {
-    final c = text[i];
-    if (quoted) {
-      if (c == '"') {
-        if (i + 1 < text.length && text[i + 1] == '"') {
-          cell.write('"');
-          i++;
-        } else {
-          quoted = false;
-        }
-      } else {
-        cell.write(c);
-      }
-    } else if (c == '"') {
-      quoted = true;
-      any = true;
-    } else if (c == ',') {
-      row.add(cell.toString());
-      cell.clear();
-      any = true;
-    } else if (c == '\n') {
-      row.add(cell.toString());
-      cell.clear();
-      rows.add(row);
-      row = [];
-      any = false;
-    } else if (c != '\r') {
-      cell.write(c);
-      any = true;
-    }
-  }
-  if (any || cell.isNotEmpty) {
-    row.add(cell.toString());
-    rows.add(row);
-  }
-  return rows;
-}
+export 'csv_codec.dart';
 
 /// Columns of `trials.csv`.
 const List<String> trialsHeader = [
   'trial_id',
   'pair_id',
+  'observed_pair_id',
   'role',
   'status',
   'reason',
@@ -134,6 +71,9 @@ List<Object?> trialRow(Trial t) {
   return [
     t.trialId,
     c.pairId,
+    // What the code carried: the pair id a receiver read from the headers, or the one a
+    // sender put on screen. Join a receiver's on a sender's to pair two phones' trials.
+    r?.observedPairId.value ?? t.sender?.pairIdOnScreen.value,
     c.role.name,
     t.status.name,
     t.reason,
@@ -270,6 +210,7 @@ const List<String> framesHeader = [
   'segment_index',
   'packet_seed',
   'distinct',
+  'pair_id',
   'have',
   'need',
   'done',
@@ -302,6 +243,7 @@ String framesCsv(Iterable<Trial> trials) {
         f.segmentIndex,
         f.packetSeed,
         f.distinct,
+        f.sessionId == null ? null : TrialFactory.pairIdOf(f.sessionId!),
         f.have,
         f.need,
         f.done,

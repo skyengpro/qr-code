@@ -12,6 +12,7 @@ import '../model/stat.dart';
 import '../model/trial.dart';
 import 'clock.dart';
 import 'scanner_port.dart';
+import 'trial_factory.dart';
 import 'trial_machine.dart';
 
 /// Records one receiver trial from a scanner's events and diagnostics.
@@ -75,6 +76,7 @@ class ReceiverRecorder extends ChangeNotifier {
   int _have = 0, _need = 0, _segmentsDone = 0, _segmentsTotal = 0;
   Observed<String> _profile = const Observed.unknown();
   Observed<int> _shapeId = const Observed.unknown();
+  final Map<String, int> _pairIdsSeen = {};
 
   // Milestones (milliseconds on the trial clock).
   double? _firstAcceptedMs;
@@ -304,6 +306,15 @@ class ReceiverRecorder extends ChangeNotifier {
       }
     }
 
+    final session = d.sessionId;
+    if (session != null) {
+      _pairIdsSeen.update(
+        TrialFactory.pairIdOf(session),
+        (v) => v + 1,
+        ifAbsent: () => 1,
+      );
+    }
+
     final rejectStage = d.rejectStage;
     if (rejectStage != null) {
       _byStage.update(rejectStage.name, (v) => v + 1, ifAbsent: () => 1);
@@ -388,6 +399,15 @@ class ReceiverRecorder extends ChangeNotifier {
       receivedSha256: _receivedSha,
       observedProfile: _profile,
       observedShapeId: _shapeId,
+      observedPairId: _pairIdsSeen.isEmpty
+          ? const Observed.unknown()
+          : Observed<String>.measured(
+              (_pairIdsSeen.entries.toList()
+                    ..sort((a, b) => b.value.compareTo(a.value)))
+                  .first
+                  .key,
+            ),
+      pairIdsSeen: Map.unmodifiable(_pairIdsSeen),
       have: _have,
       need: _need,
       segmentsDone: _segmentsDone,

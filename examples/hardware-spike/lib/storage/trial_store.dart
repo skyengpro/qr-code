@@ -3,6 +3,7 @@ import 'dart:io';
 
 import '../model/trial.dart';
 import '../model/trial_config.dart';
+import '../model/trial_setup.dart';
 
 /// Trials read from disk.
 class LoadedTrials {
@@ -96,6 +97,22 @@ class TrialStore {
   /// Saves [annotations].
   Future<void> saveAnnotations(Annotations annotations) async {
     await _atomicWrite(_annotationsFile, jsonEncode(annotations.toJson()));
+  }
+
+  File get _setupFile => File('${root.path}/last_setup.json');
+
+  /// The New trial form as it was last used (defaults if none or unreadable).
+  Future<TrialSetup> loadLastSetup() async {
+    try {
+      return TrialSetup.fromJson(jsonDecode(await _setupFile.readAsString()));
+    } on Object {
+      return const TrialSetup();
+    }
+  }
+
+  /// Saves the New trial form as it was used.
+  Future<void> saveLastSetup(TrialSetup setup) async {
+    await _atomicWrite(_setupFile, jsonEncode(setup.toJson()));
   }
 
   File get _stateFile => File('${root.path}/results_state.json');

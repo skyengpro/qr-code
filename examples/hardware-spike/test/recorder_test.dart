@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:particle_code/particle_code.dart';
 import 'package:particle_code_hardware_spike/model/measurements.dart';
+import 'package:particle_code_hardware_spike/model/observed.dart';
 import 'package:particle_code_hardware_spike/model/trial.dart';
 import 'package:particle_code_hardware_spike/trial/trial_machine.dart';
 
@@ -222,6 +223,52 @@ void main() {
         'value': null,
         'source': 'unavailable',
       });
+    });
+
+    test('the pair id comes from the headers the receiver read', () async {
+      final rig = RecorderRig();
+      await rig.recorder.start();
+      // Before any header: nothing known.
+      rig.port.diag(
+        diagFrame(id: 1, locked: false, rejectStage: RejectStage.locate),
+      );
+      // A header read, the packet then rejected: the pair id is still known.
+      rig.port.diag(
+        diagFrame(
+          id: 2,
+          sessionId: 0xbeef,
+          rejectStage: RejectStage.receiver,
+          rejectCategory: 'packetCrc',
+        ),
+      );
+      rig.port.diag(diagFrame(id: 3, sessionId: 0xbeef, accepted: true));
+      // A stray code from a neighbouring pair, seen once.
+      rig.port.diag(diagFrame(id: 4, sessionId: 0x0042, accepted: true));
+      await rig.recorder.cancel();
+      final m = (await rig.recorder.finished).receiver!;
+      expect(m.observedPairId.value, 'P-beef');
+      expect(m.observedPairId.source, ValueSource.measured);
+      expect(m.pairIdsSeen, {'P-beef': 2, 'P-0042': 1});
+      expect(
+        [for (final f in m.frames) f.sessionId],
+        [null, 0xbeef, 0xbeef, 0x42],
+      );
+      final back = ReceiverMeasurements.fromJson(m.toJson());
+      expect(back.observedPairId.value, 'P-beef');
+      expect(back.pairIdsSeen, m.pairIdsSeen);
+      expect(back.frames[1].sessionId, 0xbeef);
+    });
+
+    test('no header read leaves the pair id unknown', () async {
+      final rig = RecorderRig();
+      await rig.recorder.start();
+      rig.port.diag(
+        diagFrame(id: 1, locked: false, rejectStage: RejectStage.locate),
+      );
+      await rig.recorder.cancel();
+      final m = (await rig.recorder.finished).receiver!;
+      expect(m.observedPairId.isUnknown, isTrue);
+      expect(m.pairIdsSeen, isEmpty);
     });
 
     test('delivery gaps come only from the same native clock', () async {
