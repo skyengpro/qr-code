@@ -71,7 +71,12 @@ class TrialStore {
         unreadable++;
       }
     }
-    trials.sort((a, b) => a.createdAtUtc.compareTo(b.createdAtUtc));
+    // Ties broken by id: `sort` is not stable, and directory listing order differs
+    // between platforms (sorted on macOS, hashed on Linux ext4).
+    trials.sort((a, b) {
+      final byTime = a.createdAtUtc.compareTo(b.createdAtUtc);
+      return byTime != 0 ? byTime : a.trialId.compareTo(b.trialId);
+    });
     return LoadedTrials(trials, unreadable: unreadable, recovered: recovered);
   }
 

@@ -169,13 +169,14 @@ Trial createdTrial({
   DeviceIdentity? device,
   Conditions conditions = const Conditions(),
   Annotations annotations = const Annotations(),
+  DateTime? createdAt,
 }) => TrialFactory.create(
   trialId: id,
   config: config ?? testConfig(),
   conditions: conditions,
   annotations: annotations,
   device: device ?? fakeDevice(),
-  nowUtc: DateTime.utc(2026, 1, 1, 12),
+  nowUtc: createdAt ?? DateTime.utc(2026, 1, 1, 12),
 );
 
 /// Everything needed to run a receiver trial against fakes.
