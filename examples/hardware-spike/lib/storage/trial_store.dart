@@ -37,7 +37,6 @@ class TrialStore {
 
   /// Writes [trial] (replacing an earlier version of the same trial).
   Future<void> save(Trial trial) async {
-    await _trialsDir.create(recursive: true);
     await _atomicWrite(
       _trialFile(trial.trialId),
       const JsonEncoder.withIndent(' ').convert(trial.toJson()),
@@ -96,7 +95,6 @@ class TrialStore {
 
   /// Saves [annotations].
   Future<void> saveAnnotations(Annotations annotations) async {
-    await root.create(recursive: true);
     await _atomicWrite(_annotationsFile, jsonEncode(annotations.toJson()));
   }
 
@@ -114,16 +112,18 @@ class TrialStore {
 
   /// Saves the export / share state.
   Future<void> saveResultsState(Map<String, Object?> state) async {
-    await root.create(recursive: true);
     await _atomicWrite(_stateFile, jsonEncode(state));
   }
 
   // Writes are serialized: a trial is saved when it starts and again when it ends, and
-  // the two must not race on the same temporary file.
+  // the two must not race on the same temporary file. A write is queued synchronously,
+  // in call order; nothing may be awaited before that (creating the directory used to
+  // be, which let a trial's start record land after its end record).
   Future<void> _writes = Future<void>.value();
 
   Future<void> _atomicWrite(File target, String content) {
     final next = _writes.then((_) async {
+      await target.parent.create(recursive: true);
       final tmp = File('${target.path}.tmp');
       await tmp.writeAsString(content, flush: true);
       await tmp.rename(target.path);
