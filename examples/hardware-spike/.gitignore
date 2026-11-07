@@ -49,3 +49,8 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Written by tool/release.sh from ~/.keys/hardware-spike/ios.env
+ios/Flutter/Signing.xcconfig
+ios/ExportOptions.plist
+/android/build/
