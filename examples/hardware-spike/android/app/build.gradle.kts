@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -29,11 +31,30 @@ android {
         versionName = flutter.versionName
     }
 
+    // Upload key for Google Play, kept outside the repo (see tool/setup_android_key.sh).
+    val keyProps = Properties()
+    val keyPropsFile = file(
+        System.getenv("SPIKE_KEY_PROPERTIES")
+            ?: "${System.getProperty("user.home")}/.keys/hardware-spike/key.properties",
+    )
+    if (keyPropsFile.exists()) keyPropsFile.inputStream().use { keyProps.load(it) }
+
+    signingConfigs {
+        if (keyPropsFile.exists()) {
+            create("upload") {
+                storeFile = file(keyProps.getProperty("storeFile"))
+                storePassword = keyProps.getProperty("storePassword")
+                keyAlias = keyProps.getProperty("keyAlias")
+                keyPassword = keyProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Without the upload key (CI, fresh checkouts) fall back to debug signing so
+            // `flutter run --release` keeps working; Play rejects such a bundle.
+            signingConfig = signingConfigs.findByName("upload") ?: signingConfigs.getByName("debug")
         }
     }
 }

@@ -34,6 +34,25 @@ through the plugin's Native Assets hook (see the demo's README for toolchain nee
 iOS deployment target is 15.0 and the Android `minSdk` 24, as in the plugin. Simulators and
 emulators have no camera that can scan; use phones.
 
+## Store builds (internal testing)
+
+Secrets live outside the repo in `~/.keys/hardware-spike/` (back it up): the Android upload
+keystore and `key.properties` (made by `tool/setup_android_key.sh`), `ios.env` (`APPLE_TEAM_ID`,
+optionally `ASC_KEY_ID` / `ASC_ISSUER_ID`) and the App Store Connect key `AuthKey_<ID>.p8`.
+
+```sh
+tool/release.sh android   # build/app/outputs/bundle/release/app-release.aab -> Play Console, Internal testing
+tool/release.sh ios       # build/ios/ipa/*.ipa -> TestFlight (uploaded when the ASC key is set, else Transporter)
+```
+
+The build number is minutes since the epoch (override with `BUILD_NUMBER`), so every run is
+uploadable. The first Play upload must be done by hand in the console.
+
+Store assets: `tool/make_icons.sh` rebuilds the app icons from `assets/icon/icon-source.png`
+(and `assets/icon/play-store-512.png`); `tool/screenshots_all.sh [ios|android]` captures the store
+screenshots on simulators/emulators into `build/screenshots/<device>/` (no receiver shot: it needs
+a camera).
+
 ## How a tester runs trials
 
 Start with the pair **Pixel 9 Pro XL and iPhone 13**, in both directions (each phone as sender,
@@ -80,7 +99,8 @@ On Home:
   (`reports/particle-spike-report-<UTC time>.zip`). It is plain file IO and works offline. The
   path is shown on screen.
 * **Send results** exports (or reuses the up-to-date bundle) and opens the **OS share sheet** with
-  the zip. There are no credentials, no backend and no analytics. Cancelling or failing leaves the
+  the zip. There are no credentials and no backend for results (the optional error telemetry under
+  *Privacy* is separate). Cancelling or failing leaves the
   bundle on disk, and the outcome is shown and kept, so you can press **Send results** again.
 
 **Where to send it.** The collection recipient or channel is **not yet defined**. Until the
@@ -189,6 +209,21 @@ decoded synthetic bytes, device model/OS/app facts, timings, counters, and what 
 into annotations and notes (do not write personal data there). It excludes credential contents,
 session and signing keys, camera images, persistent personal device identifiers (no Android ID,
 `identifierForVendor`, serial number, or user-assigned device name) and unrelated logs.
+
+### Error and crash telemetry (optional, off by default)
+
+The app runs inside [`otel_zone`](https://github.com/vaam-apps/flutter-otel-zone): every uncaught
+error is kept in a local log, and native crashes of earlier runs are read back from the OS
+(MetricKit on iOS, `ApplicationExitInfo` on Android). A build exports them **only** when it was
+built with `--dart-define=OTEL_EXPORTER_OTLP_ENDPOINT=https://<collector>` (`tool/release.sh` reads
+it from `~/.keys/hardware-spike/otel.env`). Without it nothing leaves the phone, as before.
+
+When on, it sends errors and crashes only (log level `warning` and above, plus the last few
+lower-level records around a fault): exception text and stack traces, the route pattern the app
+was on (`/sender`, never a trial id), the app version, build and source revision, and the device
+model and OS version. No trial data, no annotations, no camera images, no account or device
+identifier (`enduser.id` is never set). The platforms keep their raw crash files app-private and
+out of backups until the report is delivered.
 
 ## Code map
 

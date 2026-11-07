@@ -294,6 +294,9 @@ class _NewTrialScreenState extends State<NewTrialScreen> {
     final trial = state.createTrial(config, conditions);
     navigator.pushReplacement(
       MaterialPageRoute<void>(
+        settings: RouteSettings(
+          name: _role == TrialRole.sender ? '/sender' : '/receiver',
+        ),
         builder: (_) => _role == TrialRole.sender
             ? SenderScreen(trial: trial)
             : ReceiverScreen(trial: trial),

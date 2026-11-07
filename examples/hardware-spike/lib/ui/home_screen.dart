@@ -136,6 +136,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 key: const Key('new-trial'),
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
+                    settings: const RouteSettings(name: '/new-trial'),
                     builder: (_) => const NewTrialScreen(),
                   ),
                 ),
@@ -269,6 +270,7 @@ class _HomeScreenState extends State<HomeScreen> {
               trailing: StatusChip(t),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
+                  settings: const RouteSettings(name: '/trial'),
                   builder: (_) => TrialDetailScreen(trial: t),
                 ),
               ),

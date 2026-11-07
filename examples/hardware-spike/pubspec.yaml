@@ -1,7 +1,7 @@
 name: particle_code_hardware_spike
 description: Hardware benchmark spike for the particle_code plugin. Records repeatable sender/receiver trials and exports a report bundle.
 publish_to: none
-version: 0.1.0+1
+version: 0.1.2+3
 
 environment:
   sdk: ^3.10.0
@@ -13,6 +13,10 @@ dependencies:
   device_info_plus: ^13.3.0
   flutter:
     sdk: flutter
+  otel_zone:
+    git:
+      url: https://github.com/vaam-apps/flutter-otel-zone.git
+      ref: 7f4f250b51e40b3b08e917e5800ae3ced2e6ef45
   package_info_plus: ^10.2.2
   particle_code:
     path: ../../flutter/particle_code

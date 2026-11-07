@@ -154,11 +154,18 @@ class ParticleCodePainter extends CustomPainter {
     final fade = (m == null || prev == null)
         ? 1.0
         : mo.crossfadeAlpha(tSinceSwitch);
-    final comparable =
-        prev != null &&
-        prev!.profile == frame.profile &&
-        prevDots != null &&
-        prevDots.length == dots.length;
+    // A plain nullable local, tested with `!= null` in the loop. Do not fold this back into
+    // a `final bool` that promotes `prevDots`: release (AOT) builds hoisted the loads of
+    // `prevDots`' arrays above that promotion guard, reading through `null` on the first
+    // frame (no previous frame) and crashing with SIGSEGV on iOS devices.
+    final FrameDots? prevMatch =
+        (fade < 1.0 &&
+            prev != null &&
+            prev!.profile == frame.profile &&
+            prevDots != null &&
+            prevDots.length == dots.length)
+        ? prevDots
+        : null;
     final shimmer = m?.shimmer ?? false;
     final ripple = (m?.ripple ?? false) ? tSinceSegmentComplete : null;
     final dotMotion = (m != null && lattice)
@@ -183,15 +190,15 @@ class ParticleCodePainter extends CustomPainter {
       var radius = _radius(dots.size[i]);
       var plain = true;
 
-      if (fade < 1.0 && comparable) {
-        if (prevDots.q[i] == dots.q[i] && prevDots.r[i] == dots.r[i]) {
-          final pc = prevDots.color[i];
+      if (prevMatch != null) {
+        if (prevMatch.q[i] == dots.q[i] && prevMatch.r[i] == dots.r[i]) {
+          final pc = prevMatch.color[i];
           if (pc != color) {
             final from = ParticleCodePalette.hues[pc & 3];
             rgb = shimmer ? lerpHue(from, rgb, fade) : lerpRgb(from, rgb, fade);
             plain = false;
           }
-          final pr = _radius(prevDots.size[i]);
+          final pr = _radius(prevMatch.size[i]);
           radius = pr + (radius - pr) * fade;
         }
       }

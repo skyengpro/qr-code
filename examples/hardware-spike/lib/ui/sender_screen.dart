@@ -155,7 +155,7 @@ class _SenderScreenState extends State<SenderScreen> {
                         '${_config.shapeName} ${_config.fps} fps',
                         key: const Key('sender-label'),
                         style: const TextStyle(
-                          color: Colors.white70,
+                          color: Colors.black87,
                           fontSize: 12,
                         ),
                       ),
