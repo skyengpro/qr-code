@@ -277,6 +277,7 @@ impl ParticleDecoder {
         FrameResultDto {
             profile: Some(header.profile.into()),
             shape_id: Some(header.shape_id),
+            session_id: Some(header.session_id),
             liveness: liveness.into(),
             progress: progress.into(),
             reject_reason,
@@ -346,6 +347,7 @@ impl FrameResultDto {
             locked: false,
             profile: None,
             shape_id: None,
+            session_id: None,
             anchors: Vec::new(),
             sharpness: 0.0,
             liveness: LivenessDto::Unknown,

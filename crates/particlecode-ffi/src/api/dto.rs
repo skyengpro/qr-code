@@ -644,6 +644,10 @@ pub struct FrameResultDto {
     pub profile: Option<ProfileDto>,
     /// Shape id, once the frame's header was read.
     pub shape_id: Option<u8>,
+    /// Session id, once the frame's header was read (also when the receiver then rejects
+    /// the packet). Lets a caller tell which transfer was on screen before any packet is
+    /// accepted.
+    pub session_id: Option<u16>,
     /// Anchor positions in image pixels for a UI overlay: top, lower right, lower left,
     /// then the center mark if it was found. Empty when not locked.
     pub anchors: Vec<ImagePointDto>,

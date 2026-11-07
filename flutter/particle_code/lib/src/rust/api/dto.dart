@@ -642,6 +642,11 @@ class FrameResultDto {
   /// Shape id, once the frame's header was read.
   final int? shapeId;
 
+  /// Session id, once the frame's header was read (also when the receiver then rejects
+  /// the packet). Lets a caller tell which transfer was on screen before any packet is
+  /// accepted.
+  final int? sessionId;
+
   /// Anchor positions in image pixels for a UI overlay: top, lower right, lower left,
   /// then the center mark if it was found. Empty when not locked.
   final List<ImagePointDto> anchors;
@@ -682,6 +687,7 @@ class FrameResultDto {
     required this.locked,
     this.profile,
     this.shapeId,
+    this.sessionId,
     required this.anchors,
     required this.sharpness,
     required this.liveness,
@@ -700,6 +706,7 @@ class FrameResultDto {
       locked.hashCode ^
       profile.hashCode ^
       shapeId.hashCode ^
+      sessionId.hashCode ^
       anchors.hashCode ^
       sharpness.hashCode ^
       liveness.hashCode ^
@@ -720,6 +727,7 @@ class FrameResultDto {
           locked == other.locked &&
           profile == other.profile &&
           shapeId == other.shapeId &&
+          sessionId == other.sessionId &&
           anchors == other.anchors &&
           sharpness == other.sharpness &&
           liveness == other.liveness &&

@@ -477,6 +477,7 @@ class ParticleScanner {
                 packetSeed: packet.packetSeed,
                 distinct: packet.distinct,
               ),
+        sessionId: result?.sessionId,
         have: progress ? _have : null,
         need: progress ? _need : null,
         segmentsDone: progress ? _segmentsDone : null,

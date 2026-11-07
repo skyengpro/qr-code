@@ -852,6 +852,7 @@ void main() {
       expect(f.rejectCategory, isNull);
       expect((f.packet!.segmentIndex, f.packet!.packetSeed), (2, 77));
       expect(f.packet!.distinct, isTrue);
+      expect(f.sessionId, 0xBEEF);
       expect((f.have, f.need), (5, 40));
       expect((f.segmentsDone, f.segmentsTotal), (1, 3));
       expect(f.done, isFalse);
@@ -876,6 +877,7 @@ void main() {
       await pumpEventQueue();
       final f = diag.whereType<ScanFrameDiagnostics>().single;
       expect(f.held, isNull);
+      expect(f.sessionId, isNull);
       expect(f.capture, isNull);
       expect(f.received, isNull);
       expect(f.skippedBefore, 0);
@@ -1439,6 +1441,7 @@ FrameResultDto _result({
   locked: locked,
   profile: locked ? ProfileDto.m : null,
   shapeId: locked ? 28 : null,
+  sessionId: locked ? 0xBEEF : null,
   anchors: anchors,
   sharpness: locked ? 2.5 : 0,
   liveness: locked

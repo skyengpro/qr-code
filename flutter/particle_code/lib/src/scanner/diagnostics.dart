@@ -206,6 +206,7 @@ class ScanFrameDiagnostics extends ScanDiagnostic {
     this.rejectStage,
     this.rejectCategory,
     this.packet,
+    this.sessionId,
     this.have,
     this.need,
     this.segmentsDone,
@@ -259,6 +260,11 @@ class ScanFrameDiagnostics extends ScanDiagnostic {
 
   /// The packet, once the header was read.
   final PacketInfo? packet;
+
+  /// Session id from this frame's header, `null` unless the header was read. Set also
+  /// when the receiver then rejected the packet, so a frame says which transfer was on
+  /// screen before any packet is accepted.
+  final int? sessionId;
 
   /// Receiver progress after this frame (sticky values as in `ScanFrame`).
   final int? have, need, segmentsDone, segmentsTotal;
